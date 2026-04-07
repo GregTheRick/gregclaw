@@ -1,3 +1,4 @@
+import { resolveBatchedReplyThreadingPolicy } from "openclaw/plugin-sdk/reply-reference";
 import { resolveWhatsAppAccount } from "../../accounts.js";
 import { getPrimaryIdentityId, getSelfIdentity, getSenderIdentity } from "../../identity.js";
 import { newConnectionId } from "../../reconnect.js";
@@ -304,6 +305,12 @@ export async function processMessage(params: {
     },
     visibleReplyTo: visibleReplyTo ?? undefined,
   });
+  const replyThreading = account.replyToMode
+    ? resolveBatchedReplyThreadingPolicy(account.replyToMode, params.msg.isBatched ?? false)
+    : undefined;
+  if (replyThreading !== undefined) {
+    ctxPayload.ReplyThreading = replyThreading;
+  }
 
   const pinnedMainDmRecipient = resolvePinnedMainDmRecipient({
     cfg: params.cfg,

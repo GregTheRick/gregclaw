@@ -101,7 +101,7 @@ export function buildWhatsAppInboundContext(params: {
         }))
       : undefined;
 
-  return finalizeInboundContext({
+  const result = finalizeInboundContext({
     Body: params.combinedBody,
     BodyForAgent: params.msg.body,
     InboundHistory: inboundHistory,
@@ -138,6 +138,7 @@ export function buildWhatsAppInboundContext(params: {
     OriginatingChannel: "whatsapp",
     OriginatingTo: params.msg.from,
   });
+  return result;
 }
 
 export function resolveWhatsAppDmRouteTarget(params: {
@@ -236,7 +237,7 @@ export async function dispatchWhatsAppBufferedReply(params: {
   maxMediaBytes: number;
   maxMediaTextChunkLimit?: number;
   msg: WebInboundMsg;
-  onModelSelected?: ChannelReplyOnModelSelected | undefined;
+  onModelSelected?: ChannelReplyOnModelSelected;
   rememberSentText: (
     text: string | undefined,
     opts: {

@@ -11,6 +11,7 @@ import {
   DmPolicySchema,
   GroupPolicySchema,
   MarkdownConfigSchema,
+  ReplyToModeSchema,
 } from "./zod-schema.core.js";
 
 const ToolPolicyBySenderSchema = z.record(z.string(), ToolPolicySchema).optional();
@@ -61,6 +62,7 @@ const WhatsAppSharedSchema = z.object({
   ackReaction: WhatsAppAckReactionSchema,
   reactionLevel: z.enum(["off", "ack", "minimal", "extensive"]).optional(),
   debounceMs: z.number().int().nonnegative().optional().default(0),
+  replyToMode: ReplyToModeSchema.optional(),
   heartbeat: ChannelHeartbeatVisibilitySchema,
   healthMonitor: ChannelHealthMonitorSchema,
 });
