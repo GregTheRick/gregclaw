@@ -20,3 +20,4 @@ export {
   type OllamaEmbeddingClient,
   type OllamaEmbeddingProvider,
 } from "./src/embedding-provider.js";
+export { createGemma4StreamFn, decodeGenerateNdjsonStream } from "./src/gemma4-stream.js";

@@ -22,6 +22,7 @@ import {
   DEFAULT_OLLAMA_EMBEDDING_MODEL,
   createOllamaEmbeddingProvider,
 } from "./src/embedding-provider.js";
+import { createGemma4StreamFn } from "./src/gemma4-stream.js";
 import { ollamaMemoryEmbeddingProviderAdapter } from "./src/memory-embedding-adapter.js";
 import { resolveOllamaApiBase } from "./src/provider-models.js";
 import {
@@ -237,10 +238,18 @@ export default definePluginEntry({
         await ensureOllamaModelPulled({ config, model, prompter });
       },
       createStreamFn: ({ config, model, provider }) => {
+        const baseUrl = resolveConfiguredOllamaProviderConfig({
+          config,
+          providerId: provider,
+        })?.baseUrl;
+        const normalized = model?.id?.toLowerCase() || "";
+        const isGemma4 = normalized.includes("gemma4") || normalized.includes("gemma-4");
+        if (isGemma4) {
+          return createGemma4StreamFn(baseUrl || OLLAMA_DEFAULT_BASE_URL);
+        }
         return createConfiguredOllamaStreamFn({
           model,
-          providerBaseUrl: resolveConfiguredOllamaProviderConfig({ config, providerId: provider })
-            ?.baseUrl,
+          providerBaseUrl: baseUrl,
         });
       },
       ...OPENAI_COMPATIBLE_REPLAY_HOOKS,

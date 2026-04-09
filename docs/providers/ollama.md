@@ -263,6 +263,30 @@ Choose **Ollama Web Search** during `openclaw onboard` or
 
 For the full setup and behavior details, see [Ollama Web Search](/tools/ollama-search).
 
+## Gemma 4 Support
+
+OpenClaw features advanced, native integration with Gemma 4 models through Ollama. Because of Gemma 4's unique formatting requirements, OpenClaw automatically bypasses Ollama's standard chat templating and acts directly across the raw API.
+
+### Configuration
+
+No special configuration is required beyond naming the model with `gemma4` in its ID. Any Ollama model containing `gemma4` or `gemma-4` in its name will automatically be routed to the specialized OpenClaw Gemma 4 stream abstraction.
+
+### Under the Hood
+
+Gemma 4 integration automatically enforces `raw: true` directly against Ollama's `/api/generate` endpoint. It uses:
+
+- Custom stream chunking to intercept `tool_call` and `tool_response` definitions natively, overriding typical text streams.
+- `<|"|>` delimiters for JSON parameters as enforced by Google documentation.
+- The `<|think|>` block injection inside system prompts for agentic reasoning loops.
+
+### Agentic Thinking
+
+If Thinking mode is enabled for the model (default for Gemma 4 models), OpenClaw preserves internal Chain of Thought (CoT) across active function call loops to prevent the model from forgetting context between sequential tool steps, while accurately stripping it across standard multi-turn interactions.
+
+### Troubleshooting
+
+- **Malformed Tool Output**: If your Gemma 4 model outputs tool JSON textually directly to the user, ensure it is properly named (e.g. `gemma4`) so OpenClaw triggers the explicit Gemma 4 stream formatter rather than the standard Ollama chat templater.
+
 ## Advanced
 
 ### Reasoning models
