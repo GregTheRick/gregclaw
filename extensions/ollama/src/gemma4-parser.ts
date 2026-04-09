@@ -7,6 +7,7 @@ export interface Gemma4StreamEvent {
 export class Gemma4Parser {
   private buffer = "";
   private state: "text" | "thinking" | "tool_call" = "text";
+  private strippedBos = false;
 
   // Unescape the <|"|> wrapping back into standard JSON
   public static unescapeGemmaParams(gemmaStr: string): Record<string, unknown> {
@@ -36,6 +37,16 @@ export class Gemma4Parser {
   public push(chunk: string): Gemma4StreamEvent[] {
     this.buffer += chunk;
     const events: Gemma4StreamEvent[] = [];
+
+    if (!this.strippedBos) {
+      if ("<bos>".startsWith(this.buffer)) {
+        return [];
+      }
+      if (this.buffer.startsWith("<bos>")) {
+        this.buffer = this.buffer.slice(5);
+      }
+      this.strippedBos = true;
+    }
 
     let processedIdx = 0;
     while (processedIdx < this.buffer.length) {

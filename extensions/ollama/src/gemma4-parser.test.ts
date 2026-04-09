@@ -17,6 +17,20 @@ describe("gemma4-parser", () => {
       expect(events).toEqual([{ type: "text", content: "Hello world" }]);
     });
 
+    it("strips <bos> token at start", () => {
+      const parser = new Gemma4Parser();
+      const events = parser.push("<bos>Hello world");
+      expect(events).toEqual([{ type: "text", content: "Hello world" }]);
+    });
+
+    it("strips fragmented <bos> token at start", () => {
+      const parser = new Gemma4Parser();
+      const ev1 = parser.push("<b");
+      const ev2 = parser.push("os>Hello world");
+      expect(ev1).toEqual([]);
+      expect(ev2).toEqual([{ type: "text", content: "Hello world" }]);
+    });
+
     it("extracts thinking and text in one chunk", () => {
       const parser = new Gemma4Parser();
       const events = parser.push("<|channel>thought\nhmm<channel|>\nyes");

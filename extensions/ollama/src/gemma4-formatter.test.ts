@@ -28,7 +28,7 @@ describe("gemma4-formatter", () => {
       const messages = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
       const result = convertToGemma4Format(messages, { system: "You are a bot" });
       expect(result).toBe(
-        "<|turn>system\nYou are a bot<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "<bos><|turn>system\nYou are a bot<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
       );
     });
 
@@ -192,7 +192,7 @@ describe("gemma4-formatter", () => {
       });
 
       expect(result).toBe(
-        "<|turn>system\nYou are a helpful assistant.<turn|>\n<|turn>user\nHello.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "<bos><|turn>system\nYou are a helpful assistant.<turn|>\n<|turn>user\nHello.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
       );
     });
 
@@ -258,7 +258,7 @@ describe("gemma4-formatter", () => {
       const result = convertToGemma4Format(messages, { system: "", thinkActive: true });
       // The formatter leaves the last assistant message open for pre-fill, so it lacks the trailing <turn|>\n.
       expect(result).toBe(
-        '<|turn>system\n<|think|><turn|>\n<|turn>user\nWhat is the water formula?<turn|>\n<|turn>model\n<|channel>thought\n...\n<channel|>The most common interpretation of "the water formula" refers...',
+        '<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nWhat is the water formula?<turn|>\n<|turn>model\n<|channel>thought\n...\n<channel|>The most common interpretation of "the water formula" refers...',
       );
     });
 
@@ -279,7 +279,7 @@ describe("gemma4-formatter", () => {
 
       const result = convertToGemma4Format(messages);
       expect(result).toBe(
-        "<|turn>user\nDescribe this image: <|image|>\n\nAnd translate these audio:\n\na. <|audio|>\nb. <|audio|><turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "<bos><|turn>user\nDescribe this image: <|image|>\n\nAnd translate these audio:\n\na. <|audio|>\nb. <|audio|><turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
       );
     });
   });

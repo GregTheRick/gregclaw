@@ -114,7 +114,7 @@ export function convertToGemma4Format(
     preserveAllThoughts?: boolean;
   },
 ): string {
-  let output = "";
+  let output = "<bos>";
 
   // 1. System Turn
   if (options?.system || (options?.tools && options.tools.length > 0) || options?.thinkActive) {
