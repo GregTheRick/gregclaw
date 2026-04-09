@@ -138,6 +138,39 @@ describe("gemma4-formatter", () => {
       expect(result.endsWith("<tool_response|>")).toBe(true);
     });
 
+    it("strips thoughts from previous turns but preserves them in the current turn", () => {
+      const messages = [
+        { role: "user", content: "Turn 1" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "Old thought" },
+            { type: "text", text: "Old response" },
+          ],
+        },
+        { role: "user", content: "Turn 2" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "New thought" },
+            { type: "toolCall", id: "call_99", name: "func", arguments: {} },
+          ],
+        },
+        { role: "toolResult", toolCallId: "call_99", toolName: "func", content: "Res" },
+      ];
+
+      const result = convertToGemma4Format(messages);
+
+      // Should not contain the old thought
+      expect(result).not.toContain("Old thought");
+      // Should preserve the new thought because it's part of the current turn's tool loop
+      expect(result).toContain("<|channel>thought\nNew thought\n<channel|>");
+      // Ensures the old turn got formatted correctly
+      expect(result).toContain(
+        "<|turn>user\nTurn 1<turn|>\n<|turn>model\nOld response<turn|>\n<|turn>user\nTurn 2<turn|>\n",
+      );
+    });
+
     it("reorders parallel tool responses to strictly match tool calls order", () => {
       const messages = [
         {

@@ -135,6 +135,15 @@ export function convertToGemma4Format(
   let inModelTurn = false;
   let currentTurnToolIds: string[] = [];
 
+  // Identify the boundary for the current agent turn (everything after the last user message)
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const isLastMessage = i === messages.length - 1;
@@ -161,20 +170,12 @@ export function convertToGemma4Format(
         currentTurnToolIds = toolCalls.map((c) => c.id).filter(Boolean) as string[];
       }
 
-      // Preserve thoughts only if asked, OR if we are currently inside a tool loop turn!
-      // A turn is a tool loop if it has tool calls. However, if this is an older turn that finished,
       // Google docs say: "strip the model's generated thoughts from the previous turn... If a single model
       // turn involves function or tool calls, thoughts must NOT be removed between the function calls."
-      // So if `isLastMessage` is false, and there are NO tool calls following it, we should generally
-      // strip thoughts unless preserveAllThoughts=true.
+      // We consider the "current turn" to be any assistant messages that appear AFTER the very last user message.
       let keepThoughts = options?.preserveAllThoughts;
       if (!keepThoughts) {
-        // We keep thoughts if this assistant message is part of ongoing tool interaction
-        // i.e., it has tool calls, OR follows a tool. For simplicity, just keep if it's the
-        // *last* assistant message in the current turn before we prompt the model again, or if it has tool calls.
-        if (hasToolCallsHere || isLastMessage) {
-          keepThoughts = true;
-        }
+        keepThoughts = i > lastUserIdx;
       }
 
       if (thinking && keepThoughts) {
