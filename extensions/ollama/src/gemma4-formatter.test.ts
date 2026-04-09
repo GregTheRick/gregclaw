@@ -44,7 +44,7 @@ describe("gemma4-formatter", () => {
         },
       ];
       // preserveAllThoughts=true because it is the last message
-      const result = convertToGemma4Format(messages);
+      const result = convertToGemma4Format(messages, { thinkActive: true });
 
       // Since assistant response is the last message without a tool call,
       // it should remain open if we expect the model to maybe stop? No, our logic says if it's the last message,
@@ -81,7 +81,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages);
+      const result = convertToGemma4Format(messages, { thinkActive: true });
       expect(result).toContain(
         '<|tool_call>call:get_weather{loc:<|"|>London<|"|>,_pid:<|"|>call_abc1<|"|>}<tool_call|>',
       );
@@ -122,7 +122,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages);
+      const result = convertToGemma4Format(messages, { thinkActive: true });
 
       // Should not contain <turn|> for the assistant/tool loop
       // Should contain the thoughts because it's part of a tool loop
@@ -159,7 +159,7 @@ describe("gemma4-formatter", () => {
         { role: "toolResult", toolCallId: "call_99", toolName: "func", content: "Res" },
       ];
 
-      const result = convertToGemma4Format(messages);
+      const result = convertToGemma4Format(messages, { thinkActive: true });
 
       // Should not contain the old thought
       expect(result).not.toContain("Old thought");
@@ -202,7 +202,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const out = convertToGemma4Format(messages);
+      const out = convertToGemma4Format(messages, { thinkActive: true });
 
       // Expected tool_response sequence should perfectly match Alpha, Beta, Gamma chronological output strings
       const expectedOutput =

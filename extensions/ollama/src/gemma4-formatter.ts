@@ -123,7 +123,7 @@ export function convertToGemma4Format(
       output += "<|think|>";
     }
     if (options.system) {
-      output += options.system;
+      output += options.system.replace(/^\s+/, "");
     }
     if (options.tools && options.tools.length > 0) {
       output += formatGemmaToolDeclarations(options.tools);
@@ -162,7 +162,7 @@ export function convertToGemma4Format(
       }
 
       const text = extractTextContent(msg.content);
-      const thinking = extractThinkingContent(msg.content);
+      let thinking = extractThinkingContent(msg.content).trim();
       const toolCalls = extractToolCalls(msg.content);
 
       const hasToolCallsHere = toolCalls.length > 0;
@@ -178,7 +178,7 @@ export function convertToGemma4Format(
         keepThoughts = i > lastUserIdx;
       }
 
-      if (thinking && keepThoughts) {
+      if (thinking && keepThoughts && options?.thinkActive) {
         output += `<|channel>thought\n${thinking}\n<channel|>`;
       } else if (!options?.thinkActive && !thinking) {
         output += `<|channel>thought\n<channel|>`;
