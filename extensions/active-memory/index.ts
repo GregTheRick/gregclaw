@@ -290,6 +290,7 @@ function isEligibleInteractiveSession(ctx: {
 function resolveChatType(ctx: {
   sessionKey?: string;
   messageProvider?: string;
+  channelId?: string;
 }): ActiveMemoryChatType | undefined {
   const sessionKey = ctx.sessionKey?.trim().toLowerCase();
   if (sessionKey) {
@@ -301,6 +302,13 @@ function resolveChatType(ctx: {
     }
     if (sessionKey.includes(":direct:") || sessionKey.includes(":dm:")) {
       return "direct";
+    }
+    if (/^agent:[^:]+:main$/.test(sessionKey)) {
+      const provider = (ctx.messageProvider ?? "").trim().toLowerCase();
+      const channelId = (ctx.channelId ?? "").trim();
+      if (provider && provider !== "webchat" && channelId) {
+        return "direct";
+      }
     }
   }
   const provider = (ctx.messageProvider ?? "").trim().toLowerCase();
@@ -315,6 +323,7 @@ function isAllowedChatType(
   ctx: {
     sessionKey?: string;
     messageProvider?: string;
+    channelId?: string;
   },
 ): boolean {
   const chatType = resolveChatType(ctx);

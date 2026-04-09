@@ -145,6 +145,25 @@ describe("active-memory plugin", () => {
     expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
   });
 
+  it("treats non-webchat main sessions as direct chats under the default dmScope", async () => {
+    const result = await hooks.before_prompt_build(
+      { prompt: "what wings should i order?", messages: [] },
+      {
+        agentId: "main",
+        trigger: "user",
+        sessionKey: "agent:main:main",
+        messageProvider: "telegram",
+        channelId: "telegram",
+      },
+    );
+
+    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      prependSystemContext: expect.stringContaining("plugin-provided supplemental context"),
+      appendSystemContext: expect.stringContaining("<active_memory_plugin>"),
+    });
+  });
+
   it("runs for group sessions when group chat types are explicitly allowed", async () => {
     api.pluginConfig = {
       agents: ["main"],
