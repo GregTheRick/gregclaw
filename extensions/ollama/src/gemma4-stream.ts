@@ -11,7 +11,7 @@ const log = createSubsystemLogger("ollama-gemma4-stream");
 
 export async function* decodeGenerateNdjsonStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): AsyncGenerator<{ response?: string; done?: boolean }> {
+): AsyncGenerator<Record<string, unknown>> {
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -30,7 +30,7 @@ export async function* decodeGenerateNdjsonStream(
         continue;
       }
       try {
-        yield parseJsonPreservingUnsafeIntegers(trimmed) as { response?: string; done?: boolean };
+        yield parseJsonPreservingUnsafeIntegers(trimmed) as Record<string, unknown>;
       } catch {
         log.warn(`Skipping malformed NDJSON line: ${trimmed.slice(0, 120)}`);
       }
@@ -39,10 +39,7 @@ export async function* decodeGenerateNdjsonStream(
 
   if (buffer.trim()) {
     try {
-      yield parseJsonPreservingUnsafeIntegers(buffer.trim()) as {
-        response?: string;
-        done?: boolean;
-      };
+      yield parseJsonPreservingUnsafeIntegers(buffer.trim()) as Record<string, unknown>;
     } catch {}
   }
 }
@@ -146,8 +143,17 @@ export function createGemma4StreamFn(
           } as unknown as AssistantMessage,
         });
 
+        let promptEvalCount = 0;
+        let evalCount = 0;
+
         for await (const chunk of decodeGenerateNdjsonStream(reader)) {
-          if (chunk.response) {
+          if (typeof chunk.prompt_eval_count === "number") {
+            promptEvalCount = chunk.prompt_eval_count;
+          }
+          if (typeof chunk.eval_count === "number") {
+            evalCount = chunk.eval_count;
+          }
+          if (typeof chunk.response === "string") {
             rawResponseBuffer += chunk.response;
             const events = parser.push(chunk.response);
 
@@ -213,9 +219,9 @@ export function createGemma4StreamFn(
           content: buildContentObj(),
           stopReason: loopRequiresToolExec ? "toolUse" : "stop",
           usage: {
-            input: 0,
-            output: 0,
-            totalTokens: 0,
+            input: promptEvalCount,
+            output: evalCount,
+            totalTokens: promptEvalCount + evalCount,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           },
         } as unknown as AssistantMessage;
