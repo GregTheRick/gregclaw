@@ -130,7 +130,7 @@ export class Gemma4Parser {
         const endMatch = this.buffer.indexOf("<channel|>", processedIdx);
         if (endMatch !== -1) {
           const content = this.buffer.slice(processedIdx, endMatch);
-          if (content.length > 0) {
+          if (content.trim().length > 0) {
             events.push({ type: "thinking", content });
           }
           processedIdx = endMatch + "<channel|>".length;
@@ -157,7 +157,10 @@ export class Gemma4Parser {
             }
           }
           if (safeEnd > processedIdx) {
-            events.push({ type: "thinking", content: this.buffer.slice(processedIdx, safeEnd) });
+            const content = this.buffer.slice(processedIdx, safeEnd);
+            if (content.trim().length > 0) {
+              events.push({ type: "thinking", content });
+            }
           }
           processedIdx = safeEnd;
           break;

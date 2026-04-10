@@ -2,6 +2,7 @@ import type { Tool } from "@mariozechner/pi-ai";
 import { parseJsonObjectPreservingUnsafeIntegers } from "./ollama-json.js";
 
 // Extracts text content correctly from Pi-AI format, including multimodal placeholders
+// Aligned with llama-gemma4.jinja (\n\n<|part|>\n\n spacing)
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -19,14 +20,53 @@ function extractTextContent(content: unknown): string {
         return p.text || "";
       }
       if (p.type === "image") {
-        return "<|image|>";
+        return "\n\n<|image|>\n\n";
       }
       if (p.type === "audio") {
-        return "<|audio|>";
+        return "\n\n<|audio|>\n\n";
+      }
+      if (p.type === "video") {
+        return "\n\n<|video|>\n\n";
       }
       return "";
     })
     .join("");
+}
+
+// Port of strip_thinking Jinja macro with 'convert' extension
+function processGemmaThinking(text: string, mode: "strip" | "convert"): string {
+  let result = "";
+  // Split by closing tag as in the Jinja template
+  const parts = text.split("<channel|>");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const openIdx = part.indexOf("<|channel>");
+    if (openIdx !== -1) {
+      // Keep text before tag, but trim it to match wrapGemmaThought's newlines
+      result += part.slice(0, openIdx).trim();
+      if (mode === "convert") {
+        let thought = part.slice(openIdx + "<|channel>".length).trim();
+        // Remove the 'thought' prefix that follows <|channel> in Gemma 4
+        if (thought.startsWith("thought")) {
+          thought = thought.slice("thought".length).trim();
+        }
+        if (thought.length > 0) {
+          result += wrapGemmaThought(thought);
+        }
+      }
+    } else {
+      // Text after the last closing tag or plain text
+      result += part.trim();
+    }
+  }
+  return result.trim();
+}
+
+function wrapGemmaThought(thought: string): string {
+  if (!thought.trim()) {
+    return "";
+  }
+  return `\nThese are my thoughts:\n${thought.trim()}\n... I think I am done thinking.\n`;
 }
 
 // Extracts thinking content
@@ -39,7 +79,8 @@ function extractThinkingContent(content: unknown): string {
       (part) => part && typeof part === "object" && (part as { type?: string }).type === "thinking",
     )
     .map((part) => (part as { thinking?: string }).thinking as string)
-    .join("");
+    .join("\n")
+    .trim();
 }
 
 // Extract tool calls
@@ -87,22 +128,158 @@ export function stringifyGemma(value: unknown): string {
   return `<|"|>${String(value as Parameters<typeof String>[0])}<|"|>`;
 }
 
+// Standard JSON Schema keys that are handled explicitly and must not be treated as
+// parameter names when iterating the properties map (mirrors format_parameters in
+// llama-gemma4.jinja).
+const GEMMA_SCHEMA_STANDARD_KEYS = new Set([
+  "description",
+  "type",
+  "properties",
+  "required",
+  "nullable",
+]);
+
+/**
+ * Port of the `format_parameters` Jinja macro from llama-gemma4.jinja.
+ * Renders a JSON Schema `properties` map into the compact Gemma 4 format,
+ * recursing into nested OBJECT / ARRAY types and hoisting description, nullable,
+ * enum, and type as first-class fields.
+ *
+ * Types are uppercased to match the Gemma tokeniser expectation (STRING, OBJECT, …).
+ */
+function formatGemmaParameters(properties: Record<string, unknown>, _required: string[]): string {
+  const parts: string[] = [];
+  const sortedKeys = Object.keys(properties).toSorted();
+
+  for (const key of sortedKeys) {
+    if (GEMMA_SCHEMA_STANDARD_KEYS.has(key)) {
+      continue;
+    }
+
+    const value = properties[key] as Record<string, unknown>;
+    const fieldParts: string[] = [];
+
+    if (typeof value["description"] === "string") {
+      fieldParts.push(`description:<|"|>${value["description"]}<|"|>`);
+    }
+
+    if (value["nullable"]) {
+      fieldParts.push(`nullable:true`);
+    }
+
+    const typeStr = (value["type"] as string | undefined)?.toUpperCase() ?? "";
+
+    if (typeStr === "STRING") {
+      if (value["enum"]) {
+        fieldParts.push(`enum:${stringifyGemma(value["enum"])}`);
+      }
+    } else if (typeStr === "OBJECT") {
+      const nestedProps = value["properties"];
+      if (nestedProps && typeof nestedProps === "object" && !Array.isArray(nestedProps)) {
+        const nestedStr = formatGemmaParameters(
+          nestedProps as Record<string, unknown>,
+          (value["required"] as string[] | undefined) ?? [],
+        );
+        fieldParts.push(`properties:{\n${nestedStr}\n}`);
+      }
+      if (Array.isArray(value["required"]) && (value["required"] as string[]).length > 0) {
+        const reqItems = (value["required"] as string[]).map((r) => `<|"|>${r}<|"|>`).join(",");
+        fieldParts.push(`required:[${reqItems}]`);
+      }
+    } else if (typeStr === "ARRAY") {
+      const items = value["items"];
+      if (items && typeof items === "object" && !Array.isArray(items)) {
+        const itemsObj = items as Record<string, unknown>;
+        const itemParts: string[] = [];
+        for (const itemKey of Object.keys(itemsObj).toSorted()) {
+          const itemValue = itemsObj[itemKey];
+          if (itemValue === null || itemValue === undefined) {
+            continue;
+          }
+          if (itemKey === "properties") {
+            if (typeof itemValue === "object" && !Array.isArray(itemValue)) {
+              const nestedStr = formatGemmaParameters(
+                itemValue as Record<string, unknown>,
+                (itemsObj["required"] as string[] | undefined) ?? [],
+              );
+              itemParts.push(`properties:{\n${nestedStr}\n}`);
+            }
+          } else if (itemKey === "required") {
+            const reqItems = (itemValue as string[]).map((r) => `<|"|>${r}<|"|>`).join(",");
+            itemParts.push(`required:[${reqItems}]`);
+          } else if (itemKey === "type") {
+            if (typeof itemValue === "string") {
+              itemParts.push(`type:${stringifyGemma(itemValue.toUpperCase())}`);
+            } else if (Array.isArray(itemValue)) {
+              itemParts.push(
+                `type:${stringifyGemma((itemValue as string[]).map((v) => v.toUpperCase()))}`,
+              );
+            }
+          } else {
+            itemParts.push(`${itemKey}:${stringifyGemma(itemValue)}`);
+          }
+        }
+        fieldParts.push(`items:{${itemParts.join(",")}}`);
+      }
+    }
+
+    if (typeStr) {
+      fieldParts.push(`type:<|"|>${typeStr}<|"|>`);
+    }
+
+    parts.push(`${key}:{${fieldParts.join(",")}}`);
+  }
+
+  return parts.join(",\n");
+}
+
+/**
+ * Port of the `format_function_declaration` Jinja macro from llama-gemma4.jinja.
+ * Produces a single `declaration:name{...}` block for one tool.
+ */
+function formatGemmaFunctionDeclaration(tool: Tool): string {
+  const declarationParts: string[] = [];
+
+  if (tool.description) {
+    declarationParts.push(`description:<|"|>${tool.description}<|"|>`);
+  }
+
+  const params = tool.parameters as
+    | {
+        type?: string;
+        properties?: Record<string, unknown>;
+        required?: string[];
+      }
+    | undefined;
+
+  if (params) {
+    const paramParts: string[] = [];
+
+    if (params.properties) {
+      const propsStr = formatGemmaParameters(params.properties, params.required ?? []);
+      paramParts.push(`properties:{\n${propsStr}\n}`);
+    }
+
+    if (Array.isArray(params.required) && params.required.length > 0) {
+      const reqItems = params.required.map((r) => `<|"|>${r}<|"|>`).join(",");
+      paramParts.push(`required:[${reqItems}]`);
+    }
+
+    if (params.type) {
+      paramParts.push(`type:<|"|>${params.type.toUpperCase()}<|"|>`);
+    }
+
+    declarationParts.push(`parameters:{\n${paramParts.join(",\n")}\n}`);
+  }
+
+  return `declaration:${tool.name}{\n${declarationParts.join(",\n")}\n}`;
+}
+
 export function formatGemmaToolDeclarations(tools: Tool[]): string {
   if (!tools || tools.length === 0) {
     return "";
   }
-  const declarations = tools.map((t) => {
-    const schemaObj: Record<string, unknown> = {};
-    if (t.description) {
-      schemaObj.description = t.description;
-    }
-    if (t.parameters) {
-      schemaObj.parameters = t.parameters;
-    }
-    const params = Object.keys(schemaObj).length > 0 ? stringifyGemma(schemaObj) : "{}";
-    return `<|tool>declaration:${t.name}${params}<tool|>`;
-  });
-  return declarations.join("");
+  return tools.map((t) => `<|tool>${formatGemmaFunctionDeclaration(t)}<tool|>`).join("");
 }
 
 export function convertToGemma4Format(
@@ -123,7 +300,7 @@ export function convertToGemma4Format(
       output += "<|think|>";
     }
     if (options.system) {
-      output += options.system;
+      output += options.system.trim(); // Aligned with Jinja: content | trim
     }
     if (options.tools && options.tools.length > 0) {
       output += formatGemmaToolDeclarations(options.tools);
@@ -134,6 +311,7 @@ export function convertToGemma4Format(
   // 2. Loop through messages
   let inModelTurn = false;
   let currentTurnToolIds: string[] = [];
+  let lastMessageType: "text" | "tool_call" | "tool_response" | null = null;
 
   // Identify the boundary for the current agent turn (everything after the last user message)
   let lastUserIdx = -1;
@@ -154,34 +332,51 @@ export function convertToGemma4Format(
         inModelTurn = false;
       }
       const text = extractTextContent(msg.content);
-      output += `<|turn>user\n${text}<turn|>\n`;
+      output += `<|turn>user\n${text.trim()}<turn|>\n`;
+      lastMessageType = "text";
     } else if (msg.role === "assistant") {
-      if (!inModelTurn) {
+      const toolCalls = extractToolCalls(msg.content);
+
+      // Jinja Deduplication: Avoid re-opening turn if continuing from tool_response
+      if (!inModelTurn || (lastMessageType === "tool_response" && toolCalls.length > 0)) {
+        if (inModelTurn) {
+          output += "<turn|>\n";
+        } // Close previous if weirdly nested, though usually handled
         output += "<|turn>model\n";
         inModelTurn = true;
       }
 
-      const text = extractTextContent(msg.content);
+      let text = extractTextContent(msg.content);
       let thinking = extractThinkingContent(msg.content);
-      const toolCalls = extractToolCalls(msg.content);
 
-      const hasToolCallsHere = toolCalls.length > 0;
-      if (hasToolCallsHere) {
+      if (toolCalls.length > 0) {
         currentTurnToolIds = toolCalls.map((c) => c.id).filter(Boolean) as string[];
       }
 
-      // Google docs say: "strip the model's generated thoughts from the previous turn... If a single model
-      // turn involves function or tool calls, thoughts must NOT be removed between the function calls."
-      // We consider the "current turn" to be any assistant messages that appear AFTER the very last user message.
-      let keepThoughts = options?.preserveAllThoughts;
-      if (!keepThoughts) {
-        keepThoughts = i > lastUserIdx;
-      }
+      // History Handling: Humanize or Strip reasoning
+      const isHistorical = i < lastUserIdx;
+      const keepThoughts = options?.preserveAllThoughts || i > lastUserIdx;
 
-      if (thinking && keepThoughts && options?.thinkActive) {
-        output += `<|channel>thought\n${thinking}\n<channel|>`;
-      } else if (!options?.thinkActive && !thinking) {
-        output += `<|channel>thought\n<channel|>`;
+      if (isHistorical) {
+        if (keepThoughts) {
+          // Humanize turn
+          text = processGemmaThinking(text, "convert");
+          if (thinking) {
+            output += wrapGemmaThought(thinking);
+          }
+        } else {
+          // Strip reasoning
+          text = processGemmaThinking(text, "strip");
+          thinking = ""; // Drop explicit thinking
+        }
+      } else {
+        // Current turn or after last user message: keep technical tokens
+        if (thinking && options?.thinkActive) {
+          output += `<|channel>thought\n${thinking}\n<channel|>`;
+        } else if (!options?.thinkActive && !thinking) {
+          // Template logic: trigger empty thought to speed up model response
+          // Handled at final generation block usually, but also valid here for intermediate assistant turns
+        }
       }
 
       if (text) {
@@ -194,18 +389,13 @@ export function convertToGemma4Format(
           args["_pid"] = call.id;
         }
         output += `<|tool_call>call:${call.name}${stringifyGemma(args)}<tool_call|>`;
+        lastMessageType = "tool_call";
       }
 
-      // If it's the last message, and it DOES NOT end with a tool call,
-      // does it get closed?
-      // Wait, if assistant provided text and NO tool calls, it's the end of its turn.
-      // But maybe we just leave it open if it's the absolutely last message, so the model continues?
-      // No, if the user history has an assistant complete response, we must close it,
-      // UNLESS the model itself generates it! But we are just formatting the *prompt*.
-      // If we are formatting the context history, past assistant turns should be closed.
-      if (!hasToolCallsHere && !isLastMessage) {
+      if (toolCalls.length === 0 && !isLastMessage) {
         output += "<turn|>\n";
         inModelTurn = false;
+        lastMessageType = "text";
       }
     } else if (msg.role === "tool" || msg.role === "toolResult") {
       if (!inModelTurn) {
@@ -224,24 +414,15 @@ export function convertToGemma4Format(
         j++;
       }
 
-      // Sort them to perfectly match the `<|tool_call>` generation order observed in the assistant block
+      // Sort matching tool call order
       consecutiveToolResults.sort((a, b) => {
-        const aMsg = a as { toolCallId?: string; id?: string };
-        const bMsg = b as { toolCallId?: string; id?: string };
-        const idA = aMsg.toolCallId || aMsg.id;
-        const idB = bMsg.toolCallId || bMsg.id;
+        const msgA = a as { toolCallId?: string; id?: string };
+        const msgB = b as { toolCallId?: string; id?: string };
+        const idA = msgA.toolCallId || msgA.id;
+        const idB = msgB.toolCallId || msgB.id;
         const idxA = currentTurnToolIds.indexOf(idA || "");
         const idxB = currentTurnToolIds.indexOf(idB || "");
-        if (idxA !== -1 && idxB !== -1) {
-          return idxA - idxB;
-        }
-        if (idxA !== -1) {
-          return -1;
-        }
-        if (idxB !== -1) {
-          return 1;
-        }
-        return 0; // maintain original order for unknown IDs
+        return (idxA !== -1 ? idxA : 999) - (idxB !== -1 ? idxB : 999);
       });
 
       for (const tMsg of consecutiveToolResults) {
@@ -257,9 +438,7 @@ export function convertToGemma4Format(
         let parsedResponse: unknown = text;
         try {
           parsedResponse = JSON.parse(text);
-        } catch {
-          // Leave as string if not JSONifiable
-        }
+        } catch {}
 
         if (toolCallId) {
           if (
@@ -276,16 +455,18 @@ export function convertToGemma4Format(
         output += `<|tool_response>response:${toolName}${stringifyGemma(parsedResponse)}<tool_response|>`;
       }
 
-      i = j - 1; // Advance main loop past the grouped tool results
+      lastMessageType = "tool_response";
+      i = j - 1;
     }
   }
 
-  // If we end on a user message, we want to open the model turn for generation!
+  // 3. Generation Prompt (End of Prompt)
+  // Ensure unconditional thought-suppression if reasoning is not enabled, matching Jinja
   if (!inModelTurn) {
     output += "<|turn>model\n";
-    if (!options?.thinkActive) {
-      output += "<|channel>thought\n<channel|>";
-    }
+  }
+  if (!options?.thinkActive) {
+    output += "<|channel>thought\n<channel|>";
   }
 
   return output;

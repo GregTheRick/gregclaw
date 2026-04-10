@@ -101,11 +101,13 @@ describe("gemma4-parser", () => {
       ]);
     });
 
-    it("parses an empty thinking channel correctly", () => {
+    it("filters out empty or whitespace-only thinking channels", () => {
       const parser = new Gemma4Parser();
-      const events = parser.push("<|channel>thought\n<channel|>");
+      const events1 = parser.push("<|channel>thought\n<channel|>");
+      const events2 = parser.push("<|channel>thought  \n  <channel|>");
 
-      expect(events).toEqual([{ type: "thinking", content: "\n" }]);
+      expect(events1).toEqual([]);
+      expect(events2).toEqual([]);
     });
 
     it("preserves leading and trailing whitespaces in text chunks", () => {

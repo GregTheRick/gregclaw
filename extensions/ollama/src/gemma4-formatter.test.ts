@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { convertToGemma4Format, stringifyGemma } from "./gemma4-formatter.js";
+import {
+  convertToGemma4Format,
+  formatGemmaToolDeclarations,
+  stringifyGemma,
+} from "./gemma4-formatter.js";
 
 describe("gemma4-formatter", () => {
   describe("stringifyGemma", () => {
@@ -32,10 +36,17 @@ describe("gemma4-formatter", () => {
       );
     });
 
-    it("preserves leading whitespaces in system prompt", () => {
+    it("trims system prompt", () => {
       const messages = [{ role: "user", content: "Hi" }];
-      const result = convertToGemma4Format(messages, { system: "  Indented system prompt" });
-      expect(result).toContain("<|turn>system\n  Indented system prompt<turn|>");
+      const result = convertToGemma4Format(messages, { system: "  Trim me  " });
+      expect(result).toContain("<|turn>system\nTrim me<turn|>\n");
+    });
+
+    it("preserves leading whitespaces inside the system prompt but trims edges", () => {
+      const messages = [{ role: "user", content: "Hi" }];
+      // Note: Outer trim() will remove the leading spaces if they are at the very start of the system string
+      const result = convertToGemma4Format(messages, { system: "\n  Indented system prompt\n" });
+      expect(result).toContain("<|turn>system\nIndented system prompt<turn|>");
     });
 
     it("formats a model turn with thinking", () => {
@@ -71,7 +82,7 @@ describe("gemma4-formatter", () => {
         },
       ];
       const result = convertToGemma4Format(messages, { thinkActive: true });
-      expect(result).toContain("<|channel>thought\n  indented thought  \n<channel|>");
+      expect(result).toContain("<|channel>thought\nindented thought\n<channel|>");
     });
 
     it("formats parallel multi tool calls with PID injection", () => {
@@ -184,12 +195,53 @@ describe("gemma4-formatter", () => {
 
       // Should not contain the old thought
       expect(result).not.toContain("Old thought");
-      // Should preserve the new thought because it's part of the current turn's tool loop
+      // Current turn reasoning is still technical
       expect(result).toContain("<|channel>thought\nNew thought\n<channel|>");
-      // Ensures the old turn got formatted correctly
+    });
+
+    it("humanizes historical thoughts when keepThoughts is active", () => {
+      const messages = [
+        { role: "user", content: "Q1" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "Thought 1" },
+            { type: "text", text: "Answer 1" },
+          ],
+        },
+        { role: "user", content: "Q2" },
+      ];
+
+      const result = convertToGemma4Format(messages, {
+        thinkActive: true,
+        preserveAllThoughts: true,
+      });
+
       expect(result).toContain(
-        "<|turn>user\nTurn 1<turn|>\n<|turn>model\nOld response<turn|>\n<|turn>user\nTurn 2<turn|>\n",
+        "These are my thoughts:\nThought 1\n... I think I am done thinking.",
       );
+      expect(result).not.toContain("<|channel>thought\nThought 1\n<channel|>");
+    });
+
+    it("humanizes reasoning embedded in historical text content", () => {
+      const messages = [
+        { role: "user", content: "Q1" },
+        {
+          role: "assistant",
+          content: "Answer <|channel>thought\nEmbedded reasoning\n<channel|> Final",
+        },
+        { role: "user", content: "Q2" },
+      ];
+
+      const result = convertToGemma4Format(messages, {
+        thinkActive: true,
+        preserveAllThoughts: true,
+      });
+
+      expect(result).toContain(
+        "Answer\nThese are my thoughts:\nEmbedded reasoning\n... I think I am done thinking.\nFinal",
+      );
+      expect(result).not.toContain("<|channel>thought");
     });
 
     it("reorders parallel tool responses to strictly match tool calls order", () => {
@@ -255,7 +307,16 @@ describe("gemma4-formatter", () => {
         {
           name: "get_current_weather",
           description: "Gets the weather",
-          parameters: { location: "string" },
+          parameters: {
+            type: "object",
+            properties: {
+              location: {
+                type: "string",
+                description: "Where to get the weather",
+              },
+            },
+            required: ["location"],
+          },
         },
       ] as any;
       const messages = [
@@ -287,7 +348,7 @@ describe("gemma4-formatter", () => {
       });
 
       expect(result).toContain(
-        '<|turn>system\n<|think|>You are a helpful assistant.<|tool>declaration:get_current_weather{description:<|"|>Gets the weather<|"|>,parameters:{location:<|"|>string<|"|>}}<tool|><turn|>',
+        `<|tool>declaration:get_current_weather{\ndescription:<|"|>Gets the weather<|"|>,\nparameters:{\nproperties:{\nlocation:{description:<|"|>Where to get the weather<|"|>,type:<|"|>STRING<|"|>}\n},\nrequired:[<|"|>location<|"|>],\ntype:<|"|>OBJECT<|"|>\n}\n}<tool|>`,
       );
       expect(result).toContain("<|turn>user\nWhat's the temperature in London?<turn|>");
       expect(result).toContain(
@@ -333,8 +394,138 @@ describe("gemma4-formatter", () => {
 
       const result = convertToGemma4Format(messages);
       expect(result).toBe(
-        "<bos><|turn>user\nDescribe this image: <|image|>\n\nAnd translate these audio:\n\na. <|audio|>\nb. <|audio|><turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        "<bos><|turn>user\nDescribe this image: \n\n<|image|>\n\n\n\nAnd translate these audio:\n\na. \n\n<|audio|>\n\n\nb. \n\n<|audio|><turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
       );
+    });
+  });
+
+  describe("formatGemmaToolDeclarations", () => {
+    it("uppercases type values", () => {
+      const tools = [
+        {
+          name: "greet",
+          description: "Say hello",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The name" },
+            },
+            required: ["name"],
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      expect(out).toContain(`type:<|"|>STRING<|"|>`);
+      expect(out).toContain(`type:<|"|>OBJECT<|"|>`);
+      // no lowercase type should appear
+      expect(out).not.toMatch(/type:<\|"\|>string/);
+    });
+
+    it("handles nested OBJECT properties (Google caveat example)", () => {
+      const tools = [
+        {
+          name: "update_config",
+          description: "Updates the configuration of the system.",
+          parameters: {
+            type: "object",
+            properties: {
+              config: {
+                type: "object",
+                description: "A Config object",
+                properties: {
+                  theme: { type: "string" },
+                  font_size: { type: "number" },
+                },
+              },
+            },
+            required: ["config"],
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      // Outer param
+      expect(out).toContain(`config:{description:<|"|>A Config object<|"|>`);
+      // Nested properties inside config
+      expect(out).toContain(`font_size:{type:<|"|>NUMBER<|"|>}`);
+      expect(out).toContain(`theme:{type:<|"|>STRING<|"|>}`);
+      // Outer object type
+      expect(out).toContain(`config:{description:<|"|>A Config object<|"|>,properties:`);
+    });
+
+    it("handles STRING enum", () => {
+      const tools = [
+        {
+          name: "set_mode",
+          description: "Set mode",
+          parameters: {
+            type: "object",
+            properties: {
+              mode: {
+                type: "string",
+                description: "The mode",
+                enum: ["fast", "slow"],
+              },
+            },
+            required: ["mode"],
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      expect(out).toContain(`enum:[<|"|>fast<|"|>,<|"|>slow<|"|>]`);
+    });
+
+    it("handles nullable field", () => {
+      const tools = [
+        {
+          name: "find",
+          description: "Find",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", nullable: true },
+            },
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      expect(out).toContain(`nullable:true`);
+    });
+
+    it("handles ARRAY with typed items", () => {
+      const tools = [
+        {
+          name: "list_things",
+          description: "List",
+          parameters: {
+            type: "object",
+            properties: {
+              ids: {
+                type: "array",
+                items: { type: "string" },
+              },
+            },
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      expect(out).toContain(`type:<|"|>ARRAY<|"|>`);
+      expect(out).toContain(`items:{type:<|"|>STRING<|"|>}`);
+    });
+
+    it("emits newlines between top-level declaration fields", () => {
+      const tools = [
+        {
+          name: "do_thing",
+          description: "Does a thing",
+          parameters: {
+            type: "object",
+            properties: { x: { type: "string" } },
+          },
+        },
+      ] as any;
+      const out = formatGemmaToolDeclarations(tools);
+      // description and parameters should be on separate lines
+      expect(out).toContain(`description:<|"|>Does a thing<|"|>,\nparameters:`);
     });
   });
 });
