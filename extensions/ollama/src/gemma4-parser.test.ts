@@ -8,6 +8,12 @@ describe("gemma4-parser", () => {
       const obj = Gemma4Parser.unescapeGemmaParams(gemmaStr);
       expect(obj).toEqual({ location: "London", temp: 15 });
     });
+
+    it("handles colons inside strings within tool arguments", () => {
+      const gemmaStr = '{code:<|"|>const x: number = 1;<|"|>,_pid:<|"|>call_123<|"|>}';
+      const obj = Gemma4Parser.unescapeGemmaParams(gemmaStr);
+      expect(obj).toEqual({ code: "const x: number = 1;", _pid: "call_123" });
+    });
   });
 
   describe("Gemma4Parser.push (streaming)", () => {
@@ -100,6 +106,18 @@ describe("gemma4-parser", () => {
       const events = parser.push("<|channel>thought\n<channel|>");
 
       expect(events).toEqual([{ type: "thinking", content: "\n" }]);
+    });
+
+    it("preserves leading and trailing whitespaces in text chunks", () => {
+      const parser = new Gemma4Parser();
+      const events = parser.push("  leading and trailing  ");
+      expect(events).toEqual([{ type: "text", content: "  leading and trailing  " }]);
+    });
+
+    it("preserves leading and trailing whitespaces in thinking blocks", () => {
+      const parser = new Gemma4Parser();
+      const events = parser.push("<|channel>thought  think  <channel|>");
+      expect(events).toEqual([{ type: "thinking", content: "  think  " }]);
     });
   });
 });

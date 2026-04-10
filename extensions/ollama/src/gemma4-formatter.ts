@@ -123,7 +123,7 @@ export function convertToGemma4Format(
       output += "<|think|>";
     }
     if (options.system) {
-      output += options.system.replace(/^\s+/, "");
+      output += options.system;
     }
     if (options.tools && options.tools.length > 0) {
       output += formatGemmaToolDeclarations(options.tools);
@@ -162,7 +162,7 @@ export function convertToGemma4Format(
       }
 
       const text = extractTextContent(msg.content);
-      let thinking = extractThinkingContent(msg.content).trim();
+      let thinking = extractThinkingContent(msg.content);
       const toolCalls = extractToolCalls(msg.content);
 
       const hasToolCallsHere = toolCalls.length > 0;

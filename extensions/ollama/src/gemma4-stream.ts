@@ -25,21 +25,20 @@ export async function* decodeGenerateNdjsonStream(
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
+      if (!line) {
         continue;
       }
       try {
-        yield parseJsonPreservingUnsafeIntegers(trimmed) as Record<string, unknown>;
+        yield parseJsonPreservingUnsafeIntegers(line) as Record<string, unknown>;
       } catch {
-        log.warn(`Skipping malformed NDJSON line: ${trimmed.slice(0, 120)}`);
+        log.warn(`Skipping malformed NDJSON line: ${line.slice(0, 120)}`);
       }
     }
   }
 
-  if (buffer.trim()) {
+  if (buffer) {
     try {
-      yield parseJsonPreservingUnsafeIntegers(buffer.trim()) as Record<string, unknown>;
+      yield parseJsonPreservingUnsafeIntegers(buffer) as Record<string, unknown>;
     } catch {}
   }
 }

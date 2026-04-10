@@ -32,6 +32,12 @@ describe("gemma4-formatter", () => {
       );
     });
 
+    it("preserves leading whitespaces in system prompt", () => {
+      const messages = [{ role: "user", content: "Hi" }];
+      const result = convertToGemma4Format(messages, { system: "  Indented system prompt" });
+      expect(result).toContain("<|turn>system\n  Indented system prompt<turn|>");
+    });
+
     it("formats a model turn with thinking", () => {
       const messages = [
         { role: "user", content: "Hi" },
@@ -51,6 +57,21 @@ describe("gemma4-formatter", () => {
       // we only close it if hasToolCallsHere is false AND isLastMessage is false.
       // Wait, isLastMessage is true, so it does NOT close with <turn|>.
       expect(result).toContain("<|channel>thought\nI should say hello\n<channel|>Hello there");
+    });
+
+    it("preserves leading and trailing whitespaces in thinking content", () => {
+      const messages = [
+        { role: "user", content: "Hi" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "  indented thought  " },
+            { type: "text", text: "Ok" },
+          ],
+        },
+      ];
+      const result = convertToGemma4Format(messages, { thinkActive: true });
+      expect(result).toContain("<|channel>thought\n  indented thought  \n<channel|>");
     });
 
     it("formats parallel multi tool calls with PID injection", () => {

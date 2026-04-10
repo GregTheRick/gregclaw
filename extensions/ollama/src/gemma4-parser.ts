@@ -12,25 +12,24 @@ export class Gemma4Parser {
   // Unescape the <|"|> wrapping back into standard JSON
   public static unescapeGemmaParams(gemmaStr: string): Record<string, unknown> {
     try {
-      // Replace <|"|>value<|"|> with "value"
-      // Wait, Gemma strings might contain quotes inside.
-      // If we blindly replace <|"|> with ", it might produce invalid JSON if the internal string had unescaped quotes.
-      // But JSON parser requires proper escaping. If the string format is e.g. location:<|"|>London<|"|>,
-      // we can try a regex approach or manual parsing.
+      // First, handle the quoted strings to prevent colons inside them from being treated as keys
+      const strings: string[] = [];
+      const templated = gemmaStr.replace(/<\|"\|>(.*?)<\|"\|>/gs, (_match, p1) => {
+        strings.push(JSON.stringify(p1));
+        return `__STR_${strings.length - 1}__`;
+      });
 
-      // Let's first quote the keys.
-      let jsonStr = gemmaStr.replace(/([a-zA-Z0-9_]+):/g, '"$1":');
-      // Then replace <|"|> with " and hope internal quotes were escaped, OR
-      // we might need to escape internal quotes first.
+      // Now quote the keys: [a-z0-9_]+:
+      let jsonStr = templated.replace(/([a-zA-Z0-9_]+):/g, '"$1":');
 
-      // For simplicity, a regex to find all <|"|>...<|"|> and replace them with properly JSON stringified versions.
-      jsonStr = jsonStr.replace(/<\|"\|>(.*?)<\|"\|>/gs, (match, p1) => {
-        return JSON.stringify(p1);
+      // Put the strings back
+      jsonStr = jsonStr.replace(/__STR_(\d+)__/g, (_match, p1) => {
+        return strings[parseInt(p1, 10)];
       });
 
       return JSON.parse(jsonStr);
     } catch {
-      return {}; // return empty if malformed
+      return {};
     }
   }
 
