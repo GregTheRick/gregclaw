@@ -239,10 +239,13 @@ export function createGemma4StreamFn(
           const logPath =
             process.env.OPENCLAW_GEMMA4_LOG_FILE ||
             require("node:path").join(require("node:os").tmpdir(), "openclaw-gemma4.log");
-          const logContent =
+          let logContent =
             `\n========== TURN at ${new Date().toISOString()} ==========\n` +
-            `>>> RAW PROMPT >>>\n${rawPrompt}\n` +
-            `<<< RAW RESPONSE <<<\n${rawResponseBuffer}\n`;
+            `>>> RAW PROMPT >>>\n${rawPrompt}\n`;
+          if (images.length > 0) {
+            logContent += `>>> IMAGES (base64) >>>\n${images.join("\n")}\n`;
+          }
+          logContent += `<<< RAW RESPONSE <<<\n${rawResponseBuffer}\n`;
           require("node:fs").appendFileSync(logPath, logContent);
         } catch (e) {
           log.warn(`Failed to write Gemma 4 raw log: ${String(e)}`);
