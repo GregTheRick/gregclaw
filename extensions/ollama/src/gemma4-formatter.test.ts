@@ -30,7 +30,7 @@ describe("gemma4-formatter", () => {
   describe("convertToGemma4Format", () => {
     it("formats a basic user-model turn", () => {
       const messages = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
-      const result = convertToGemma4Format(messages, { system: "You are a bot" });
+      const { prompt: result } = convertToGemma4Format(messages, { system: "You are a bot" });
       expect(result).toBe(
         "<bos><|turn>system\nYou are a bot<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
       );
@@ -38,14 +38,16 @@ describe("gemma4-formatter", () => {
 
     it("trims system prompt", () => {
       const messages = [{ role: "user", content: "Hi" }];
-      const result = convertToGemma4Format(messages, { system: "  Trim me  " });
+      const { prompt: result } = convertToGemma4Format(messages, { system: "  Trim me  " });
       expect(result).toContain("<|turn>system\nTrim me<turn|>\n");
     });
 
     it("preserves leading whitespaces inside the system prompt but trims edges", () => {
       const messages = [{ role: "user", content: "Hi" }];
       // Note: Outer trim() will remove the leading spaces if they are at the very start of the system string
-      const result = convertToGemma4Format(messages, { system: "\n  Indented system prompt\n" });
+      const { prompt: result } = convertToGemma4Format(messages, {
+        system: "\n  Indented system prompt\n",
+      });
       expect(result).toContain("<|turn>system\nIndented system prompt<turn|>");
     });
 
@@ -61,7 +63,7 @@ describe("gemma4-formatter", () => {
         },
       ];
       // preserveAllThoughts=true because it is the last message
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
 
       // Since assistant response is the last message without a tool call,
       // it should remain open if we expect the model to maybe stop? No, our logic says if it's the last message,
@@ -81,7 +83,7 @@ describe("gemma4-formatter", () => {
           ],
         },
       ];
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
       expect(result).toContain("<|channel>thought\nindented thought\n<channel|>");
     });
 
@@ -113,7 +115,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
       expect(result).toContain(
         '<|tool_call>call:get_weather{loc:<|"|>London<|"|>,_pid:<|"|>call_abc1<|"|>}<tool_call|>',
       );
@@ -154,7 +156,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
 
       // Should not contain <turn|> for the assistant/tool loop
       // Should contain the thoughts because it's part of a tool loop
@@ -191,7 +193,7 @@ describe("gemma4-formatter", () => {
         { role: "toolResult", toolCallId: "call_99", toolName: "func", content: "Res" },
       ];
 
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
 
       // Should not contain the old thought
       expect(result).not.toContain("Old thought");
@@ -212,7 +214,7 @@ describe("gemma4-formatter", () => {
         { role: "user", content: "Q2" },
       ];
 
-      const result = convertToGemma4Format(messages, {
+      const { prompt: result } = convertToGemma4Format(messages, {
         thinkActive: true,
         preserveAllThoughts: true,
       });
@@ -233,7 +235,7 @@ describe("gemma4-formatter", () => {
         { role: "user", content: "Q2" },
       ];
 
-      const result = convertToGemma4Format(messages, {
+      const { prompt: result } = convertToGemma4Format(messages, {
         thinkActive: true,
         preserveAllThoughts: true,
       });
@@ -275,7 +277,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const out = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: out } = convertToGemma4Format(messages, { thinkActive: true });
 
       // Expected tool_response sequence should perfectly match Alpha, Beta, Gamma chronological output strings
       const expectedOutput =
@@ -308,7 +310,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, { thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: true });
 
       // We expect ONE model turn opening and NO intermediate turn closings
       const matches = result.match(/<\|turn>model/g);
@@ -334,7 +336,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, { thinkActive: false });
+      const { prompt: result } = convertToGemma4Format(messages, { thinkActive: false });
 
       expect(result).toContain("<|channel>thought\nI am thinking\n<channel|>");
     });
@@ -342,7 +344,7 @@ describe("gemma4-formatter", () => {
 
   describe("Google Documentation Examples", () => {
     it("matches basic dialogue example", () => {
-      const result = convertToGemma4Format([{ role: "user", content: "Hello." }], {
+      const { prompt: result } = convertToGemma4Format([{ role: "user", content: "Hello." }], {
         system: "You are a helpful assistant.",
         thinkActive: false,
       });
@@ -391,14 +393,23 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, {
+      const { prompt: result } = convertToGemma4Format(messages, {
         system: "You are a helpful assistant.",
         tools,
         thinkActive: true,
       });
 
       expect(result).toContain(
-        `<|tool>declaration:get_current_weather{\ndescription:<|"|>Gets the weather<|"|>,\nparameters:{\nproperties:{\nlocation:{description:<|"|>Where to get the weather<|"|>,type:<|"|>STRING<|"|>}\n},\nrequired:[<|"|>location<|"|>],\ntype:<|"|>OBJECT<|"|>\n}\n}<tool|>`,
+        `<|tool>declaration:get_current_weather{
+    description:<|"|>Gets the weather<|"|>,
+    parameters:{
+        properties:{
+            location:{description:<|"|>Where to get the weather<|"|>,type:<|"|>STRING<|"|>}
+        },
+        required:[<|"|>location<|"|>],
+        type:<|"|>OBJECT<|"|>
+    }
+}<tool|>`,
       );
       expect(result).toContain("<|turn>user\nWhat's the temperature in London?<turn|>");
       expect(result).toContain(
@@ -420,7 +431,7 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages, { system: "", thinkActive: true });
+      const { prompt: result } = convertToGemma4Format(messages, { system: "", thinkActive: true });
       // The formatter leaves the last assistant message open for pre-fill, so it lacks the trailing <turn|>\n.
       expect(result).toBe(
         '<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nWhat is the water formula?<turn|>\n<|turn>model\n<|channel>thought\n...\n<channel|>The most common interpretation of "the water formula" refers...',
@@ -442,9 +453,30 @@ describe("gemma4-formatter", () => {
         },
       ];
 
-      const result = convertToGemma4Format(messages);
+      const { prompt: result } = convertToGemma4Format(messages);
       expect(result).toBe(
-        "<bos><|turn>user\nDescribe this image: \n\n<|image|>\n\n\n\nAnd translate these audio:\n\na. \n\n<|audio|>\n\n\nb. \n\n<|audio|><turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+        `<bos><|turn>user
+
+
+<|image|>
+
+
+
+<|audio|>
+
+
+
+<|audio|>
+
+Describe this image: 
+
+And translate these audio:
+
+a. 
+b. <turn|>
+<|turn>model
+<|channel>thought
+<channel|>`,
       );
     });
   });
@@ -465,8 +497,12 @@ describe("gemma4-formatter", () => {
         },
       ] as any;
       const out = formatGemmaToolDeclarations(tools);
-      expect(out).toContain(`type:<|"|>STRING<|"|>`);
-      expect(out).toContain(`type:<|"|>OBJECT<|"|>`);
+      expect(out).toContain(`    type:<|"|>OBJECT<|"|>`);
+      expect(out).toContain(`    parameters:{`);
+      expect(out).toContain(`        properties:{`);
+      expect(out).toContain(
+        `            name:{description:<|"|>The name<|"|>,type:<|"|>STRING<|"|>}`,
+      );
       // no lowercase type should appear
       expect(out).not.toMatch(/type:<\|"\|>string/);
     });
@@ -574,8 +610,51 @@ describe("gemma4-formatter", () => {
         },
       ] as any;
       const out = formatGemmaToolDeclarations(tools);
-      // description and parameters should be on separate lines
-      expect(out).toContain(`description:<|"|>Does a thing<|"|>,\nparameters:`);
+      // description and parameters should be on separate lines and indented
+      expect(out).toContain(`    description:<|"|>Does a thing<|"|>,\n    parameters:`);
+    });
+  });
+
+  describe("multimodal extraction", () => {
+    it("extracts raw base64 from different url formats", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Look at this:" },
+            {
+              type: "image",
+              image_url: {
+                url: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+              },
+            },
+            {
+              type: "image",
+              image_url: {
+                url: "data:image/png;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+              },
+            },
+          ],
+        },
+      ];
+      const { prompt, images } = convertToGemma4Format(messages as any);
+      expect(prompt).toContain("<|image|>");
+      expect(images).toHaveLength(2);
+      expect(images[0]).toBe(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      );
+      expect(images[1]).toBe("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+    });
+
+    it("extracts from 'data' field prioritizing it over 'image_url'", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image", data: "RAW_DATA", image_url: { url: "IGNORE_THIS" } }],
+        },
+      ];
+      const { images } = convertToGemma4Format(messages as any);
+      expect(images).toEqual(["RAW_DATA"]);
     });
   });
 });

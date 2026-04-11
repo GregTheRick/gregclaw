@@ -60,7 +60,7 @@ export function createGemma4StreamFn(
         // Pi-Agent natively handles the loop and will send us the `toolResult`
         // messages on subsequent invocations.
         // Formatter logic preserves thoughts across ongoing sessions inherently.
-        const rawPrompt = convertToGemma4Format(messages, {
+        const { prompt: rawPrompt, images } = convertToGemma4Format(messages, {
           system: context.systemPrompt,
           tools: context.tools,
           thinkActive:
@@ -77,13 +77,16 @@ export function createGemma4StreamFn(
           ollamaOptions.temperature = options.temperature;
         }
 
-        const body = {
+        const body: Record<string, unknown> = {
           model: model.id,
           prompt: rawPrompt,
           raw: true,
           stream: true,
           options: ollamaOptions,
         };
+        if (images.length > 0) {
+          body.images = images;
+        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",

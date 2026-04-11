@@ -1,38 +1,82 @@
 import type { Tool } from "@mariozechner/pi-ai";
-import { metaEscape } from "./gemma4-utils.js";
+import { metaEscape, metaUnescape } from "./gemma4-utils.js";
 import { parseJsonObjectPreservingUnsafeIntegers } from "./ollama-json.js";
 
-// Extracts text content correctly from Pi-AI format, including multimodal placeholders
-// Aligned with llama-gemma4.jinja (\n\n<|part|>\n\n spacing)
-function extractTextContent(content: unknown): string {
+type ContentPart = { type: "text"; text: string } | { type: "tag"; tag: string; base64?: string };
+
+export interface Gemma4PromptResult {
+  prompt: string;
+  images: string[];
+}
+
+function extractBase64(url: unknown): string | undefined {
+  if (typeof url !== "string") {
+    return undefined;
+  }
+  // If it's a data URL, strip the prefix
+  if (url.startsWith("data:")) {
+    const commaIdx = url.indexOf(",");
+    if (commaIdx !== -1) {
+      return url.slice(commaIdx + 1);
+    }
+  }
+  // If it's the custom pi-ai-image:base64: prefix, handled in extractContentParts
+  // Other strings are returned as-is (assumed raw base64)
+  return url;
+}
+
+// Extracts content parts correctly from Pi-AI format, including multimodal placeholders
+// Enforces that tags (image, audio, video) come before text within a single turn.
+function extractContentParts(content: unknown): ContentPart[] {
   if (typeof content === "string") {
-    return content;
+    return [{ type: "text", text: content }];
   }
   if (!Array.isArray(content)) {
-    return "";
+    return [];
   }
-  const textContent = (content as Array<unknown>)
-    .map((part) => {
-      if (!part || typeof part !== "object") {
-        return "";
-      }
-      const p = part as { type?: string; text?: string };
-      if (p.type === "text") {
-        return p.text || "";
-      }
-      if (p.type === "image") {
-        return "\n\n<|image|>\n\n";
-      }
-      if (p.type === "audio") {
-        return "\n\n<|audio|>\n\n";
-      }
-      if (p.type === "video") {
-        return "\n\n<|video|>\n\n";
-      }
-      return "";
-    })
-    .join("");
-  return textContent;
+
+  const tags: ContentPart[] = [];
+  const texts: ContentPart[] = [];
+
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const p = part as {
+      type?: string;
+      text?: string;
+      data?: string;
+      image_url?: { url: string };
+      audio_url?: { url: string };
+      video_url?: { url: string };
+    };
+
+    if (p.type === "text") {
+      texts.push({ type: "text", text: p.text || "" });
+    } else if (p.type === "image") {
+      const base64 = extractBase64(p.data || p.image_url?.url);
+      tags.push({
+        type: "tag",
+        tag: "\n\n<|image|>\n\n",
+        base64,
+      });
+    } else if (p.type === "audio") {
+      tags.push({
+        type: "tag",
+        tag: "\n\n<|audio|>\n\n",
+        base64: extractBase64(p.audio_url?.url),
+      });
+    } else if (p.type === "video") {
+      tags.push({
+        type: "tag",
+        tag: "\n\n<|video|>\n\n",
+        base64: extractBase64(p.video_url?.url),
+      });
+    }
+  }
+
+  // Mandatory order: Tags first, then Text
+  return [...tags, ...texts];
 }
 
 // Port of strip_thinking Jinja macro with 'convert' extension
@@ -150,7 +194,12 @@ const GEMMA_SCHEMA_STANDARD_KEYS = new Set([
  *
  * Types are uppercased to match the Gemma tokeniser expectation (STRING, OBJECT, …).
  */
-function formatGemmaParameters(properties: Record<string, unknown>, _required: string[]): string {
+function formatGemmaParameters(
+  properties: Record<string, unknown>,
+  required: string[],
+  depth = 1,
+): string {
+  const indent = "    ".repeat(depth);
   const parts: string[] = [];
   const sortedKeys = Object.keys(properties).toSorted();
 
@@ -182,8 +231,9 @@ function formatGemmaParameters(properties: Record<string, unknown>, _required: s
         const nestedStr = formatGemmaParameters(
           nestedProps as Record<string, unknown>,
           (value["required"] as string[] | undefined) ?? [],
+          depth + 1,
         );
-        fieldParts.push(`properties:{\n${nestedStr}\n}`);
+        fieldParts.push(`properties:{\n${nestedStr}\n${indent}}`);
       }
       if (Array.isArray(value["required"]) && (value["required"] as string[]).length > 0) {
         const reqItems = (value["required"] as string[]).map((r) => `<|"|>${r}<|"|>`).join(",");
@@ -204,8 +254,9 @@ function formatGemmaParameters(properties: Record<string, unknown>, _required: s
               const nestedStr = formatGemmaParameters(
                 itemValue as Record<string, unknown>,
                 (itemsObj["required"] as string[] | undefined) ?? [],
+                depth + 1,
               );
-              itemParts.push(`properties:{\n${nestedStr}\n}`);
+              itemParts.push(`properties:{\n${nestedStr}\n${indent}}`);
             }
           } else if (itemKey === "required") {
             const reqItems = (itemValue as string[]).map((r) => `<|"|>${r}<|"|>`).join(",");
@@ -230,7 +281,7 @@ function formatGemmaParameters(properties: Record<string, unknown>, _required: s
       fieldParts.push(`type:<|"|>${typeStr}<|"|>`);
     }
 
-    parts.push(`${key}:{${fieldParts.join(",")}}`);
+    parts.push(`${indent}${key}:{${fieldParts.join(",")}}`);
   }
 
   return parts.join(",\n");
@@ -244,7 +295,7 @@ function formatGemmaFunctionDeclaration(tool: Tool): string {
   const declarationParts: string[] = [];
 
   if (tool.description) {
-    declarationParts.push(`description:<|"|>${metaEscape(tool.description)}<|"|>`);
+    declarationParts.push(`    description:<|"|>${metaEscape(tool.description)}<|"|>`);
   }
 
   const params = tool.parameters as
@@ -259,20 +310,20 @@ function formatGemmaFunctionDeclaration(tool: Tool): string {
     const paramParts: string[] = [];
 
     if (params.properties) {
-      const propsStr = formatGemmaParameters(params.properties, params.required ?? []);
-      paramParts.push(`properties:{\n${propsStr}\n}`);
+      const propsStr = formatGemmaParameters(params.properties, params.required ?? [], 3);
+      paramParts.push(`        properties:{\n${propsStr}\n        }`);
     }
 
     if (Array.isArray(params.required) && params.required.length > 0) {
       const reqItems = params.required.map((r) => `<|"|>${r}<|"|>`).join(",");
-      paramParts.push(`required:[${reqItems}]`);
+      paramParts.push(`        required:[${reqItems}]`);
     }
 
     if (params.type) {
-      paramParts.push(`type:<|"|>${params.type.toUpperCase()}<|"|>`);
+      paramParts.push(`        type:<|"|>${params.type.toUpperCase()}<|"|>`);
     }
 
-    declarationParts.push(`parameters:{\n${paramParts.join(",\n")}\n}`);
+    declarationParts.push(`    parameters:{\n${paramParts.join(",\n")}\n    }`);
   }
 
   return `declaration:${tool.name}{\n${declarationParts.join(",\n")}\n}`;
@@ -293,8 +344,25 @@ export function convertToGemma4Format(
     thinkActive?: boolean;
     preserveAllThoughts?: boolean;
   },
-): string {
+): Gemma4PromptResult {
   let output = "<bos>";
+  const images: string[] = [];
+
+  const processMessageContent = (content: unknown): string => {
+    const parts = extractContentParts(content);
+    let msgOutput = "";
+    for (const part of parts) {
+      if (part.type === "text") {
+        msgOutput += metaEscape(part.text);
+      } else {
+        msgOutput += part.tag;
+        if (part.base64) {
+          images.push(part.base64);
+        }
+      }
+    }
+    return msgOutput;
+  };
 
   // 1. System Turn
   if (options?.system || (options?.tools && options.tools.length > 0) || options?.thinkActive) {
@@ -333,8 +401,8 @@ export function convertToGemma4Format(
         output += "<turn|>\n";
         inModelTurn = false;
       }
-      const text = extractTextContent(msg.content);
-      output += `<|turn>user\n${metaEscape(text.trim())}<turn|>\n`;
+      const contentStr = processMessageContent(msg.content);
+      output += `<|turn>user\n${contentStr}<turn|>\n`;
     } else if (msg.role === "assistant") {
       const toolCalls = extractToolCalls(msg.content);
 
@@ -344,38 +412,59 @@ export function convertToGemma4Format(
         inModelTurn = true;
       }
 
-      let text = extractTextContent(msg.content);
-      let thinking = extractThinkingContent(msg.content);
-
       if (toolCalls.length > 0) {
         currentTurnToolIds = toolCalls.map((c) => c.id).filter(Boolean) as string[];
       }
 
-      // History Handling: Humanize or Strip reasoning
       const isHistorical = i < lastUserIdx;
       const keepThoughts = options?.preserveAllThoughts || i > lastUserIdx;
+
+      let thinking = extractThinkingContent(msg.content);
 
       if (isHistorical) {
         if (keepThoughts) {
           // Humanize turn
+          const parts = extractContentParts(msg.content);
+          let text = "";
+          for (const p of parts) {
+            if (p.type === "text") {
+              text += p.text;
+            } else if (p.type === "tag") {
+              text += p.tag;
+              if (p.base64) {
+                images.push(p.base64);
+              }
+            }
+          }
+
           text = processGemmaThinking(text, "convert");
           if (thinking) {
             output += metaEscape(wrapGemmaThought(thinking));
           }
+          output += metaEscape(text);
         } else {
           // Strip reasoning
+          const parts = extractContentParts(msg.content);
+          let text = "";
+          for (const p of parts) {
+            if (p.type === "text") {
+              text += p.text;
+            } else if (p.type === "tag") {
+              text += p.tag;
+              if (p.base64) {
+                images.push(p.base64);
+              }
+            }
+          }
           text = processGemmaThinking(text, "strip");
-          thinking = ""; // Drop explicit thinking
+          output += metaEscape(text);
         }
       } else {
         // Current turn or after last user message: keep technical tokens
         if (thinking) {
-          output += `<|channel>thought\n${metaEscape(thinking)}<channel|>`;
+          output += `<|channel>thought\n${metaEscape(thinking)}\n<channel|>`;
         }
-      }
-
-      if (text) {
-        output += metaEscape(text);
+        output += processMessageContent(msg.content);
       }
 
       for (const call of toolCalls) {
@@ -425,12 +514,12 @@ export function convertToGemma4Format(
           toolCallId?: string;
           id?: string;
         };
-        const text = extractTextContent(tMsgRec.content);
         const toolName = tMsgRec.toolName || "unknown_tool";
         const toolCallId = tMsgRec.toolCallId || tMsgRec.id;
-        let parsedResponse: unknown = text;
+        const respContent = processMessageContent(tMsgRec.content);
+        let parsedResponse: unknown = metaUnescape(respContent); // Unescape because stringifyGemma handles escaping differently or it might be raw JSON
         try {
-          parsedResponse = JSON.parse(text);
+          parsedResponse = JSON.parse(parsedResponse as string);
         } catch {}
 
         if (toolCallId) {
@@ -461,5 +550,5 @@ export function convertToGemma4Format(
     output += "<|channel>thought\n<channel|>";
   }
 
-  return output;
+  return { prompt: output, images };
 }
