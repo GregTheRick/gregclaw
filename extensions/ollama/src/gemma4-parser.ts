@@ -85,9 +85,6 @@ export class Gemma4Parser {
           const potentialTags = new Set([
             "<",
             "<|",
-            "<\u200b",
-            "<\u200b|",
-            "<\u200b|\u200b",
             "<|c",
             "<|ch",
             "<|cha",

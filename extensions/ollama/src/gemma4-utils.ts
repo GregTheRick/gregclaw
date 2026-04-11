@@ -1,4 +1,4 @@
-export const ANCHOR = "\u200b";
+export const ANCHOR = "\u2060";
 export const META_ANCHOR = "\u200c\u200c\u200c";
 
 const CONTROL_TOKENS = [
@@ -25,12 +25,8 @@ const CONTROL_TOKENS = [
 ];
 
 function escapeToken(token: string): string {
-  if (token.includes("|")) {
-    // Insert anchor before and after EVERY pipe
-    return token.replace(/\|/g, `${ANCHOR}|${ANCHOR}`);
-  }
-  // Fallback for tokens without pipes: insert after first character
-  return token[0] + ANCHOR + token.slice(1);
+  // Use aggressive interleaving: insert anchor between every character
+  return token.split("").join(ANCHOR);
 }
 
 const SORTED_TOKENS = [...CONTROL_TOKENS].toSorted((a, b) => b.length - a.length);

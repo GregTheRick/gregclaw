@@ -8,8 +8,8 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const input = 'Hello <|turn> world <|"|>';
     const escaped = metaEscape(input);
 
-    // Check finding anchors before/after pipes
-    expect(escaped).toContain(`\u200b|\u200b`);
+    // Check aggressive interleaving (anchor between every character)
+    expect(escaped).toContain("<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>");
     expect(escaped).not.toContain("<|turn>");
 
     const unescaped = metaUnescape(escaped);
@@ -37,23 +37,23 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
 
   it("should correctly unescape model responses in the parser", () => {
     const parser = new Gemma4Parser();
-    const escapedThinking = `thought\nI am thinking about <\u200b|\u200bturn>`;
-    const chunk = `<|channel>${escapedThinking}<channel|>Done <\u200b|\u200bturn>`;
+    const escapedThinking = `thought\nI am thinking about <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>`;
+    const chunk = `<|channel>${escapedThinking}<channel|>Done <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>`;
 
     const events = parser.push(chunk);
 
     const thinkingEvent = events.find((e) => e.type === "thinking");
     expect(thinkingEvent?.content).toContain("<|turn>");
-    expect(thinkingEvent?.content).not.toContain("\u200b");
+    expect(thinkingEvent?.content).not.toContain("\u2060");
 
     const textEvent = events.find((e) => e.type === "text");
     expect(textEvent?.content).toContain("Done <|turn>");
-    expect(textEvent?.content).not.toContain("\u200b");
+    expect(textEvent?.content).not.toContain("\u2060");
   });
 
   it("should unescape tool call arguments correctly", () => {
     const parser = new Gemma4Parser();
-    const chunk = `<|tool_call>call:edit{path:<|"|>src/<\u200b|\u200bturn>.ts<|"|>}<tool_call|>`;
+    const chunk = `<|tool_call>call:edit{path:<|"|>src/<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>.ts<|"|>}<tool_call|>`;
 
     const events = parser.push(chunk);
     const toolEvent = events.find((e) => e.type === "tool_call");
@@ -73,17 +73,18 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
 
   it("should handle partial chunks with escapes correctly", () => {
     const parser = new Gemma4Parser();
-    // Split in the middle of an escape sequence
-    const chunk1 = `Start <\u200b`;
-    const chunk2 = `|\u200bturn> End`;
+    // Split in the middle of an interleaved sequence
+    const chunk1 = `Start <\u2060`;
+    const chunk2 = `|\u2060t\u2060u\u2060r\u2060n\u2060> End`;
 
     let events = parser.push(chunk1);
     expect(events).toHaveLength(1);
-    expect(events[0].content).toBe("Start ");
+    // Since <\u2060 is not a potential tag, it flushes immediately as unescaped text
+    expect(events[0].content).toBe("Start <");
 
     events = parser.push(chunk2);
     expect(events).toHaveLength(1);
-    expect(events[0].content).toBe("<|turn> End");
+    expect(events[0].content).toBe("|turn> End");
   });
 
   it("should escape system prompt and user input in the full formatter", () => {
@@ -91,10 +92,10 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const prompt = convertToGemma4Format(messages, { system: "Rule <bos>" });
 
     // System and User should be escaped
-    // <bos> in system -> <\u200bbos>
-    // <|turn> in user -> <\u200b|\u200bturn>
-    expect(prompt).toContain("<\u200bbos>");
-    expect(prompt).toContain("<\u200b|\u200bturn>");
+    // <bos> in system -> <\u2060b\u2060o\u2060s\u2060>
+    // <|turn> in user -> <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>
+    expect(prompt).toContain("<\u2060b\u2060o\u2060s\u2060>");
+    expect(prompt).toContain("<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>");
 
     // But the actual prompt structure should be literal
     expect(prompt).toMatch(/<bos><\|turn>system\nRule/);
@@ -105,8 +106,8 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const input = "Start <bos> end <eos>";
     const escaped = metaEscape(input);
 
-    expect(escaped).toContain("<\u200bbos>");
-    expect(escaped).toContain("<\u200beos>");
+    expect(escaped).toContain("<\u2060b\u2060o\u2060s\u2060>");
+    expect(escaped).toContain("<\u2060e\u2060o\u2060s\u2060>");
     expect(escaped).not.toContain("<bos>");
     expect(escaped).not.toContain("<eos>");
 
@@ -115,7 +116,9 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
 
     // Parser test
     const parser = new Gemma4Parser();
-    const events = parser.push(`Reflected: <\u200bbos> and <\u200beos>`);
+    const events = parser.push(
+      `Reflected: <\u2060b\u2060o\u2060s\u2060> and <\u2060e\u2060o\u2060s\u2060>`,
+    );
     const textEvent = events.find((e) => e.type === "text");
     expect(textEvent?.content).toBe("Reflected: <bos> and <eos>");
   });
@@ -147,11 +150,13 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const prompt = convertToGemma4Format(messages, { thinkActive: true });
 
     // Check escaping in each section
-    expect(prompt).toContain("User with <\u200bbos> and <\u200beos>");
-    expect(prompt).toContain("Thinking about <\u200bbos>");
-    expect(prompt).toContain("Text with <\u200beos>");
-    expect(prompt).toContain("Search for <\u200bbos>");
-    expect(prompt).toContain("Results containing <\u200beos>");
+    expect(prompt).toContain(
+      "User with <\u2060b\u2060o\u2060s\u2060> and <\u2060e\u2060o\u2060s\u2060>",
+    );
+    expect(prompt).toContain("Thinking about <\u2060b\u2060o\u2060s\u2060>");
+    expect(prompt).toContain("Text with <\u2060e\u2060o\u2060s\u2060>");
+    expect(prompt).toContain("Search for <\u2060b\u2060o\u2060s\u2060>");
+    expect(prompt).toContain("Results containing <\u2060e\u2060o\u2060s\u2060>");
 
     // Ensure prompt structure remains literal
     expect(prompt).toMatch(/^<bos>/); // literal bos at start
