@@ -288,6 +288,56 @@ describe("gemma4-formatter", () => {
 
       expect(out.replace(/\s+/g, "")).toContain(expectedOutput);
     });
+
+    it("does not close and reopen model turn when continuing from tool response", () => {
+      const messages = [
+        { role: "user", content: "Do something" },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "tool1", id: "t1", arguments: {} }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "t1",
+          toolName: "tool1",
+          content: "Result 1",
+        },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "tool2", id: "t2", arguments: {} }],
+        },
+      ];
+
+      const result = convertToGemma4Format(messages, { thinkActive: true });
+
+      // We expect ONE model turn opening and NO intermediate turn closings
+      const matches = result.match(/<\|turn>model/g);
+      expect(matches?.length).toBe(1);
+      expect(result).not.toContain("<tool_response|><turn|>\n<|turn>model\n<|tool_call>");
+    });
+
+    it("keeps thoughts in the current turn even if thinkActive is false", () => {
+      const messages = [
+        { role: "user", content: "Do something" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "I am thinking" },
+            { type: "toolCall", name: "tool1", id: "t1", arguments: {} },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "t1",
+          toolName: "tool1",
+          content: "Result 1",
+        },
+      ];
+
+      const result = convertToGemma4Format(messages, { thinkActive: false });
+
+      expect(result).toContain("<|channel>thought\nI am thinking\n<channel|>");
+    });
   });
 
   describe("Google Documentation Examples", () => {

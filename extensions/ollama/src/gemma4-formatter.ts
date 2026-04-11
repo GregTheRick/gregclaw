@@ -311,7 +311,6 @@ export function convertToGemma4Format(
   // 2. Loop through messages
   let inModelTurn = false;
   let currentTurnToolIds: string[] = [];
-  let lastMessageType: "text" | "tool_call" | "tool_response" | null = null;
 
   // Identify the boundary for the current agent turn (everything after the last user message)
   let lastUserIdx = -1;
@@ -333,15 +332,11 @@ export function convertToGemma4Format(
       }
       const text = extractTextContent(msg.content);
       output += `<|turn>user\n${text.trim()}<turn|>\n`;
-      lastMessageType = "text";
     } else if (msg.role === "assistant") {
       const toolCalls = extractToolCalls(msg.content);
 
-      // Jinja Deduplication: Avoid re-opening turn if continuing from tool_response
-      if (!inModelTurn || (lastMessageType === "tool_response" && toolCalls.length > 0)) {
-        if (inModelTurn) {
-          output += "<turn|>\n";
-        } // Close previous if weirdly nested, though usually handled
+      // Open model turn if not already in it
+      if (!inModelTurn) {
         output += "<|turn>model\n";
         inModelTurn = true;
       }
@@ -371,11 +366,8 @@ export function convertToGemma4Format(
         }
       } else {
         // Current turn or after last user message: keep technical tokens
-        if (thinking && options?.thinkActive) {
-          output += `<|channel>thought\n${thinking}\n<channel|>`;
-        } else if (!options?.thinkActive && !thinking) {
-          // Template logic: trigger empty thought to speed up model response
-          // Handled at final generation block usually, but also valid here for intermediate assistant turns
+        if (thinking) {
+          output += `<|channel>thought\n${thinking}<channel|>`;
         }
       }
 
@@ -389,13 +381,11 @@ export function convertToGemma4Format(
           args["_pid"] = call.id;
         }
         output += `<|tool_call>call:${call.name}${stringifyGemma(args)}<tool_call|>`;
-        lastMessageType = "tool_call";
       }
 
       if (toolCalls.length === 0 && !isLastMessage) {
         output += "<turn|>\n";
         inModelTurn = false;
-        lastMessageType = "text";
       }
     } else if (msg.role === "tool" || msg.role === "toolResult") {
       if (!inModelTurn) {
@@ -455,7 +445,6 @@ export function convertToGemma4Format(
         output += `<|tool_response>response:${toolName}${stringifyGemma(parsedResponse)}<tool_response|>`;
       }
 
-      lastMessageType = "tool_response";
       i = j - 1;
     }
   }
