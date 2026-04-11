@@ -9,7 +9,9 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const escaped = metaEscape(input);
 
     // Check aggressive interleaving (anchor between every character)
-    expect(escaped).toContain("<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>");
+    expect(escaped).toContain(
+      "<\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>",
+    );
     expect(escaped).not.toContain("<|turn>");
 
     const unescaped = metaUnescape(escaped);
@@ -37,23 +39,23 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
 
   it("should correctly unescape model responses in the parser", () => {
     const parser = new Gemma4Parser();
-    const escapedThinking = `thought\nI am thinking about <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>`;
-    const chunk = `<|channel>${escapedThinking}<channel|>Done <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>`;
+    const escapedThinking = `thought\nI am thinking about <\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>`;
+    const chunk = `<|channel>${escapedThinking}<channel|>Done <\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>`;
 
     const events = parser.push(chunk);
 
     const thinkingEvent = events.find((e) => e.type === "thinking");
     expect(thinkingEvent?.content).toContain("<|turn>");
-    expect(thinkingEvent?.content).not.toContain("\u2060");
+    expect(thinkingEvent?.content).not.toContain("\u2060_\u2060");
 
     const textEvent = events.find((e) => e.type === "text");
     expect(textEvent?.content).toContain("Done <|turn>");
-    expect(textEvent?.content).not.toContain("\u2060");
+    expect(textEvent?.content).not.toContain("\u2060_\u2060");
   });
 
   it("should unescape tool call arguments correctly", () => {
     const parser = new Gemma4Parser();
-    const chunk = `<|tool_call>call:edit{path:<|"|>src/<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>.ts<|"|>}<tool_call|>`;
+    const chunk = `<|tool_call>call:edit{path:<|"|>src/<\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>.ts<|"|>}<tool_call|>`;
 
     const events = parser.push(chunk);
     const toolEvent = events.find((e) => e.type === "tool_call");
@@ -74,8 +76,8 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
   it("should handle partial chunks with escapes correctly", () => {
     const parser = new Gemma4Parser();
     // Split in the middle of an interleaved sequence
-    const chunk1 = `Start <\u2060`;
-    const chunk2 = `|\u2060t\u2060u\u2060r\u2060n\u2060> End`;
+    const chunk1 = `Start <\u2060_\u2060`;
+    const chunk2 = `|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060> End`;
 
     let events = parser.push(chunk1);
     expect(events).toHaveLength(1);
@@ -92,10 +94,12 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const prompt = convertToGemma4Format(messages, { system: "Rule <bos>" });
 
     // System and User should be escaped
-    // <bos> in system -> <\u2060b\u2060o\u2060s\u2060>
-    // <|turn> in user -> <\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>
-    expect(prompt).toContain("<\u2060b\u2060o\u2060s\u2060>");
-    expect(prompt).toContain("<\u2060|\u2060t\u2060u\u2060r\u2060n\u2060>");
+    // <bos> in system -> <\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>
+    // <|turn> in user -> <\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>
+    expect(prompt).toContain("<\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>");
+    expect(prompt).toContain(
+      "<\u2060_\u2060|\u2060_\u2060t\u2060_\u2060u\u2060_\u2060r\u2060_\u2060n\u2060_\u2060>",
+    );
 
     // But the actual prompt structure should be literal
     expect(prompt).toMatch(/<bos><\|turn>system\nRule/);
@@ -106,8 +110,8 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     const input = "Start <bos> end <eos>";
     const escaped = metaEscape(input);
 
-    expect(escaped).toContain("<\u2060b\u2060o\u2060s\u2060>");
-    expect(escaped).toContain("<\u2060e\u2060o\u2060s\u2060>");
+    expect(escaped).toContain("<\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>");
+    expect(escaped).toContain("<\u2060_\u2060e\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>");
     expect(escaped).not.toContain("<bos>");
     expect(escaped).not.toContain("<eos>");
 
@@ -117,7 +121,7 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
     // Parser test
     const parser = new Gemma4Parser();
     const events = parser.push(
-      `Reflected: <\u2060b\u2060o\u2060s\u2060> and <\u2060e\u2060o\u2060s\u2060>`,
+      `Reflected: <\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060> and <\u2060_\u2060e\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>`,
     );
     const textEvent = events.find((e) => e.type === "text");
     expect(textEvent?.content).toBe("Reflected: <bos> and <eos>");
@@ -151,12 +155,18 @@ describe("Gemma 4 Meta-Escaping Roundtrip", () => {
 
     // Check escaping in each section
     expect(prompt).toContain(
-      "User with <\u2060b\u2060o\u2060s\u2060> and <\u2060e\u2060o\u2060s\u2060>",
+      "User with <\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060> and <\u2060_\u2060e\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>",
     );
-    expect(prompt).toContain("Thinking about <\u2060b\u2060o\u2060s\u2060>");
-    expect(prompt).toContain("Text with <\u2060e\u2060o\u2060s\u2060>");
-    expect(prompt).toContain("Search for <\u2060b\u2060o\u2060s\u2060>");
-    expect(prompt).toContain("Results containing <\u2060e\u2060o\u2060s\u2060>");
+    expect(prompt).toContain(
+      "Thinking about <\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>",
+    );
+    expect(prompt).toContain("Text with <\u2060_\u2060e\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>");
+    expect(prompt).toContain(
+      "Search for <\u2060_\u2060b\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>",
+    );
+    expect(prompt).toContain(
+      "Results containing <\u2060_\u2060e\u2060_\u2060o\u2060_\u2060s\u2060_\u2060>",
+    );
 
     // Ensure prompt structure remains literal
     expect(prompt).toMatch(/^<bos>/); // literal bos at start

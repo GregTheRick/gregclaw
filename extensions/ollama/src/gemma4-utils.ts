@@ -1,5 +1,5 @@
-export const ANCHOR = "\u2060";
-export const META_ANCHOR = "\u200c\u200c\u200c";
+export const ANCHOR = "\u2060_\u2060";
+export const META_ANCHOR = "\u200c_\u200c_\u200c";
 
 const CONTROL_TOKENS = [
   "<bos>",

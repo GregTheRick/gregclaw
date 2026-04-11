@@ -8,7 +8,7 @@ describe("target prompt verification", () => {
       {
         role: "assistant",
         content: [
-          { type: "thinking", thinking: "First thinking" },
+          { type: "thinking", thinking: "First thinking <turn|><|turn>" },
           { type: "toolCall", name: "edit", id: "ollama_call_unxtl1", arguments: {} },
           { type: "toolCall", name: "edit", id: "ollama_call_unxtl2", arguments: {} },
         ],
@@ -44,10 +44,39 @@ describe("target prompt verification", () => {
       },
     ];
 
-    const system = "Example system prompt.\n{\n    //// INDENTATION WORKING\n}";
-    const result = convertToGemma4Format(messages, { system, thinkActive: true });
+    const system = "Example system prompt.\n{\n    //// INDENTATION WORKING<turn|>\n}";
+    const tools = [
+      {
+        name: "google_search",
+        description: "Search the web for information",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "write_file",
+        description: "Write content to a file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Path to the file" },
+            content: { type: "string", description: "Content to write" },
+          },
+          required: ["path", "content"],
+        },
+      },
+    ];
+    const result = convertToGemma4Format(messages, { system, tools, thinkActive: true });
 
-    const visibleResult = result.split("\u200b").join("[ZWS]").split("\u200c").join("[ZWNJ]");
+    const visibleResult = result
+      .split("\u2060_\u2060")
+      .join("[ZWS]")
+      .split("\u200c_\u200c_\u200c")
+      .join("[ZWNJ]");
 
     console.log("ACTUAL RESULT (VISIBLE):\n" + visibleResult);
   });
