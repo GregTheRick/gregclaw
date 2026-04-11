@@ -1,3 +1,5 @@
+import { metaUnescape } from "./gemma4-utils.js";
+
 export interface Gemma4StreamEvent {
   type: "text" | "thinking" | "tool_call";
   content?: string;
@@ -15,7 +17,7 @@ export class Gemma4Parser {
       // First, handle the quoted strings to prevent colons inside them from being treated as keys
       const strings: string[] = [];
       const templated = gemmaStr.replace(/<\|"\|>(.*?)<\|"\|>/gs, (_match, p1) => {
-        strings.push(JSON.stringify(p1));
+        strings.push(JSON.stringify(metaUnescape(p1)));
         return `__STR_${strings.length - 1}__`;
       });
 
@@ -66,7 +68,10 @@ export class Gemma4Parser {
 
         if (nextTransition !== -1) {
           if (nextTransition > processedIdx) {
-            events.push({ type: "text", content: this.buffer.slice(processedIdx, nextTransition) });
+            events.push({
+              type: "text",
+              content: metaUnescape(this.buffer.slice(processedIdx, nextTransition)),
+            });
           }
           if (nextState === "thinking") {
             processedIdx = nextTransition + "<|channel>thought".length;
@@ -78,7 +83,11 @@ export class Gemma4Parser {
         } else {
           // Check for partial tags at the end of the buffer
           const potentialTags = new Set([
+            "<",
             "<|",
+            "<\u200b",
+            "<\u200b|",
+            "<\u200b|\u200b",
             "<|c",
             "<|ch",
             "<|cha",
@@ -121,7 +130,10 @@ export class Gemma4Parser {
           }
 
           if (safeEnd > processedIdx) {
-            events.push({ type: "text", content: this.buffer.slice(processedIdx, safeEnd) });
+            events.push({
+              type: "text",
+              content: metaUnescape(this.buffer.slice(processedIdx, safeEnd)),
+            });
           }
           processedIdx = safeEnd;
           break; // wait for more chunks
@@ -131,7 +143,7 @@ export class Gemma4Parser {
         if (endMatch !== -1) {
           const content = this.buffer.slice(processedIdx, endMatch);
           if (content.trim().length > 0) {
-            events.push({ type: "thinking", content });
+            events.push({ type: "thinking", content: metaUnescape(content) });
           }
           processedIdx = endMatch + "<channel|>".length;
           this.state = "text";
@@ -159,7 +171,7 @@ export class Gemma4Parser {
           if (safeEnd > processedIdx) {
             const content = this.buffer.slice(processedIdx, safeEnd);
             if (content.trim().length > 0) {
-              events.push({ type: "thinking", content });
+              events.push({ type: "thinking", content: metaUnescape(content) });
             }
           }
           processedIdx = safeEnd;

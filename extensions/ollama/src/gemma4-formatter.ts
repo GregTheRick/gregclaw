@@ -1,4 +1,5 @@
 import type { Tool } from "@mariozechner/pi-ai";
+import { metaEscape } from "./gemma4-utils.js";
 import { parseJsonObjectPreservingUnsafeIntegers } from "./ollama-json.js";
 
 // Extracts text content correctly from Pi-AI format, including multimodal placeholders
@@ -10,7 +11,7 @@ function extractTextContent(content: unknown): string {
   if (!Array.isArray(content)) {
     return "";
   }
-  return (content as Array<unknown>)
+  const textContent = (content as Array<unknown>)
     .map((part) => {
       if (!part || typeof part !== "object") {
         return "";
@@ -31,6 +32,7 @@ function extractTextContent(content: unknown): string {
       return "";
     })
     .join("");
+  return textContent;
 }
 
 // Port of strip_thinking Jinja macro with 'convert' extension
@@ -74,13 +76,14 @@ function extractThinkingContent(content: unknown): string {
   if (!Array.isArray(content)) {
     return "";
   }
-  return (content as Array<unknown>)
+  const thinkingContent = (content as Array<unknown>)
     .filter(
       (part) => part && typeof part === "object" && (part as { type?: string }).type === "thinking",
     )
     .map((part) => (part as { thinking?: string }).thinking as string)
     .join("\n")
     .trim();
+  return thinkingContent;
 }
 
 // Extract tool calls
@@ -111,7 +114,7 @@ function extractToolCalls(
 
 export function stringifyGemma(value: unknown): string {
   if (typeof value === "string") {
-    return `<|"|>${value}<|"|>`;
+    return `<|"|>${metaEscape(value)}<|"|>`;
   }
   if (typeof value === "number" || typeof value === "boolean" || value === null) {
     return JSON.stringify(value);
@@ -160,7 +163,7 @@ function formatGemmaParameters(properties: Record<string, unknown>, _required: s
     const fieldParts: string[] = [];
 
     if (typeof value["description"] === "string") {
-      fieldParts.push(`description:<|"|>${value["description"]}<|"|>`);
+      fieldParts.push(`description:<|"|>${metaEscape(value["description"])}<|"|>`);
     }
 
     if (value["nullable"]) {
@@ -241,7 +244,7 @@ function formatGemmaFunctionDeclaration(tool: Tool): string {
   const declarationParts: string[] = [];
 
   if (tool.description) {
-    declarationParts.push(`description:<|"|>${tool.description}<|"|>`);
+    declarationParts.push(`description:<|"|>${metaEscape(tool.description)}<|"|>`);
   }
 
   const params = tool.parameters as
@@ -300,7 +303,7 @@ export function convertToGemma4Format(
       output += "<|think|>";
     }
     if (options.system) {
-      output += options.system.trim(); // Aligned with Jinja: content | trim
+      output += metaEscape(options.system.trim()); // Aligned with Jinja: content | trim
     }
     if (options.tools && options.tools.length > 0) {
       output += formatGemmaToolDeclarations(options.tools);
@@ -331,7 +334,7 @@ export function convertToGemma4Format(
         inModelTurn = false;
       }
       const text = extractTextContent(msg.content);
-      output += `<|turn>user\n${text.trim()}<turn|>\n`;
+      output += `<|turn>user\n${metaEscape(text.trim())}<turn|>\n`;
     } else if (msg.role === "assistant") {
       const toolCalls = extractToolCalls(msg.content);
 
@@ -357,7 +360,7 @@ export function convertToGemma4Format(
           // Humanize turn
           text = processGemmaThinking(text, "convert");
           if (thinking) {
-            output += wrapGemmaThought(thinking);
+            output += metaEscape(wrapGemmaThought(thinking));
           }
         } else {
           // Strip reasoning
@@ -367,12 +370,12 @@ export function convertToGemma4Format(
       } else {
         // Current turn or after last user message: keep technical tokens
         if (thinking) {
-          output += `<|channel>thought\n${thinking}<channel|>`;
+          output += `<|channel>thought\n${metaEscape(thinking)}<channel|>`;
         }
       }
 
       if (text) {
-        output += text;
+        output += metaEscape(text);
       }
 
       for (const call of toolCalls) {
