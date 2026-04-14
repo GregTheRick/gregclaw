@@ -13,15 +13,6 @@ function extractBase64(url: unknown): string | undefined {
   if (typeof url !== "string") {
     return undefined;
   }
-  // If it's a data URL, strip the prefix
-  if (url.startsWith("data:")) {
-    const commaIdx = url.indexOf(",");
-    if (commaIdx !== -1) {
-      return url.slice(commaIdx + 1);
-    }
-  }
-  // If it's the custom pi-ai-image:base64: prefix, handled in extractContentParts
-  // Other strings are returned as-is (assumed raw base64)
   return url;
 }
 

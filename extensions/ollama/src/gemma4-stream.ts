@@ -80,6 +80,7 @@ export function createGemma4StreamFn(
         const body: Record<string, unknown> = {
           model: model.id,
           prompt: rawPrompt,
+          raw_render: true,
           raw: true,
           stream: true,
           options: ollamaOptions,
