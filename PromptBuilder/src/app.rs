@@ -91,7 +91,6 @@ fn format_prompt(turns: &[Turn]) -> String {
                         CompData::Text(txt) => {
                             if !txt.is_empty() {
                                 out.push_str(txt);
-                                if !txt.ends_with('\n') { out.push('\n'); }
                             }
                         }
                         CompData::ToolSchema { name, description, args } => {
@@ -143,7 +142,7 @@ fn format_prompt(turns: &[Turn]) -> String {
                                 }
                                 out_str.push_str("type:<|\"|>OBJECT<|\"|>} ");
                             }
-                            out_str.push_str("}<tool|>\n");
+                            out_str.push_str("}<tool|>");
                             out.push_str(&out_str);
                         }
                         _ => {}
@@ -154,7 +153,6 @@ fn format_prompt(turns: &[Turn]) -> String {
             TurnRole::User => {
                 out.push_str("<|turn>user\n");
                 out.push_str(&t.content);
-                if !t.content.ends_with('\n') && !t.content.is_empty() { out.push('\n'); }
                 out.push_str("<turn|>\n");
             }
             TurnRole::Model => {
@@ -164,12 +162,10 @@ fn format_prompt(turns: &[Turn]) -> String {
                         CompData::Text(txt) => {
                             if c.ctype == ComponentType::Answer {
                                 out.push_str(txt);
-                                if !txt.ends_with('\n') && !txt.is_empty() { out.push('\n'); }
                             } else if c.ctype == ComponentType::Thinking {
                                 out.push_str("<|channel>thought\n");
                                 out.push_str(txt);
-                                if !txt.ends_with('\n') && !txt.is_empty() { out.push('\n'); }
-                                out.push_str("<channel|>\n");
+                                out.push_str("<channel|>");
                             }
                         }
                         CompData::ToolCall { name, args } | CompData::ToolResponse { name, args } => {
@@ -191,9 +187,9 @@ fn format_prompt(turns: &[Turn]) -> String {
                             }
                             
                             if c.ctype == ComponentType::ToolCall {
-                                out.push_str(&format!("<|tool_call>call:{}{{{}}}<tool_call|>\n", name, args_chars));
+                                out.push_str(&format!("<|tool_call>call:{}{{{}}}<tool_call|>", name, args_chars));
                             } else {
-                                out.push_str(&format!("<|tool_response>response:{}{{{}}}<tool_response|>\n", name, args_chars));
+                                out.push_str(&format!("<|tool_response>response:{}{{{}}}<tool_response|>", name, args_chars));
                             }
                         }
                         _ => {}
@@ -288,10 +284,25 @@ pub fn app() -> Html {
         let turns = turns.clone();
         Callback::from(move |(target_t_idx, target_c_idx): (usize, usize)| {
             if let Some((src_t_idx, src_c_idx)) = *dragged_comp {
-                if src_t_idx == target_t_idx && src_c_idx != target_c_idx {
-                    let mut new_turns = (*turns).clone();
-                    let comp = new_turns[src_t_idx].components.remove(src_c_idx);
-                    new_turns[target_t_idx].components.insert(target_c_idx, comp);
+                let mut new_turns = (*turns).clone();
+                if new_turns[src_t_idx].role == new_turns[target_t_idx].role {
+                    if src_t_idx == target_t_idx {
+                        if src_c_idx != target_c_idx && target_c_idx != usize::MAX {
+                            let comp = new_turns[src_t_idx].components.remove(src_c_idx);
+                            new_turns[target_t_idx].components.insert(target_c_idx, comp);
+                        } else if target_c_idx == usize::MAX && src_c_idx != new_turns[target_t_idx].components.len() - 1 {
+                            let comp = new_turns[src_t_idx].components.remove(src_c_idx);
+                            new_turns[target_t_idx].components.push(comp);
+                        }
+                    } else {
+                        let comp = new_turns[src_t_idx].components.remove(src_c_idx);
+                        if target_c_idx == usize::MAX {
+                            new_turns[target_t_idx].components.push(comp);
+                        } else {
+                            let len = new_turns[target_t_idx].components.len();
+                            new_turns[target_t_idx].components.insert(target_c_idx.min(len), comp);
+                        }
+                    }
                     turns.set(new_turns);
                 }
             }
@@ -299,7 +310,13 @@ pub fn app() -> Html {
         })
     };
 
-    let on_drag_over = Callback::from(|e: DragEvent| { e.prevent_default(); });
+    let on_drag_over = Callback::from(|e: DragEvent| { 
+        e.prevent_default(); 
+        if let Some(dt) = e.data_transfer() {
+            dt.set_drop_effect("move");
+        }
+    });
+    let on_drag_enter = Callback::from(|e: DragEvent| { e.prevent_default(); });
 
     let next_cid = next_comp_id.clone();
     let add_component = {
@@ -382,16 +399,18 @@ pub fn app() -> Html {
                         let dt = dragged_turn.clone();
                         let idx = t_idx;
                         let on_drag_turn_start = Callback::from(move |e: DragEvent| {
-                            if let Some(dt_transfer) = e.data_transfer() { dt_transfer.set_data("text/plain", &idx.to_string()).unwrap(); }
+                            if let Some(dt_transfer) = e.data_transfer() { let _ = dt_transfer.set_data("text/plain", &idx.to_string()); }
                             e.stop_propagation();
                             dt.set(Some(idx));
                         });
                         
                         let ot = on_drop_turn.clone();
+                        let odc = on_drop_comp.clone();
                         let on_drop_turn_cb = Callback::from(move |e: DragEvent| {
                             e.prevent_default();
                             e.stop_propagation();
                             ot.emit(idx);
+                            odc.emit((idx, usize::MAX));
                         });
                         
                         let on_role_change = {
@@ -409,7 +428,7 @@ pub fn app() -> Html {
                         let on_del_turn = remove_turn.reform(move |_| id);
                         
                         html! {
-                            <div class="turn-card" draggable="true" ondragstart={on_drag_turn_start} ondrop={on_drop_turn_cb} ondragover={on_drag_over.clone()}>
+                            <div class="turn-card" draggable="true" ondragstart={on_drag_turn_start} ondrop={on_drop_turn_cb} ondragover={on_drag_over.clone()} ondragenter={on_drag_enter.clone()}>
                                 <div class="turn-header" style="cursor: grab;">
                                     <select class="role-select" onchange={on_role_change} onclick={|e:MouseEvent| e.stop_propagation()}>
                                         <option value="System" selected={t.role == TurnRole::System}>{"⚙️ System"}</option>
@@ -434,7 +453,7 @@ pub fn app() -> Html {
                                                     <div class="toggle-slider"></div>
                                                     <span>{"Enable <|think|> switch"}</span>
                                                 </label>
-                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drag_over.clone(), next_comp_id.clone(), up.clone()) }
+                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drop_turn.clone(), on_drag_over.clone(), on_drag_enter.clone(), up.clone()) }
                                                 <div class="add-comp-row">
                                                     <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::SystemText) })}>{"+ Text"}</button>
                                                     <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::ToolSchema) })}>{"+ Schema"}</button>
@@ -453,7 +472,7 @@ pub fn app() -> Html {
                                     } else {
                                         html! {
                                             <>
-                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drag_over.clone(), next_comp_id.clone(), up.clone()) }
+                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drop_turn.clone(), on_drag_over.clone(), on_drag_enter.clone(), up.clone()) }
                                                 <div class="add-comp-row">
                                                     <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Answer) })}>{"+ Answer"}</button>
                                                     <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Thinking) })}>{"+ Thinking"}</button>
@@ -483,12 +502,22 @@ fn render_components(
     t: &Turn, t_idx: usize, 
     dragged_comp: &UseStateHandle<Option<(usize, usize)>>,
     on_drop_comp: Callback<(usize, usize)>,
+    on_drop_turn: Callback<usize>,
     on_drag_over: Callback<DragEvent>,
-    comp_id_gen: UseStateHandle<usize>,
+    on_drag_enter: Callback<DragEvent>,
     update: Callback<(usize, Turn)>
 ) -> Html {
+    let odp_list = on_drop_comp.clone();
+    let ot_list = on_drop_turn.clone();
+    let on_drop_list = Callback::from(move |e: DragEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+        odp_list.emit((t_idx, usize::MAX));
+        ot_list.emit(t_idx);
+    });
+
     html! {
-        <div class="component-list">
+        <div class="component-list" ondrop={on_drop_list} ondragover={on_drag_over.clone()} ondragenter={on_drag_enter.clone()} style="min-height: 20px;">
             { for t.components.iter().enumerate().map(|(c_idx, c)| {
                 let c_id = c.id;
                 let c_type = c.ctype.clone();
@@ -496,15 +525,18 @@ fn render_components(
                 
                 let dc = dragged_comp.clone();
                 let on_drag_start = Callback::from(move |e: DragEvent| {
+                    if let Some(dt) = e.data_transfer() { let _ = dt.set_data("text/plain", &format!("{}-{}", t_idx, c_idx)); }
                     e.stop_propagation();
                     dc.set(Some((t_idx, c_idx)));
                 });
                 
                 let odp = on_drop_comp.clone();
+                let ot_child = on_drop_turn.clone();
                 let on_drop = Callback::from(move |e: DragEvent| {
                     e.prevent_default();
                     e.stop_propagation();
                     odp.emit((t_idx, c_idx));
+                    ot_child.emit(t_idx);
                 });
                 
                 let t_del = t.clone(); let up_del = update.clone();
@@ -515,7 +547,7 @@ fn render_components(
                 });
                 
                 html! {
-                    <div class="comp-card" draggable="true" ondragstart={on_drag_start} ondrop={on_drop} ondragover={on_drag_over.clone()}>
+                    <div class="comp-card" draggable="true" ondragstart={on_drag_start} ondrop={on_drop} ondragover={on_drag_over.clone()} ondragenter={on_drag_enter.clone()}>
                         <div class="comp-card-header" style="cursor: grab;">
                             <span class="comp-badge">{format!("{:?}", c_type)}</span>
                             <button onclick={on_del} class="delete-btn">{"✕"}</button>
@@ -536,7 +568,7 @@ fn render_components(
                                 html! { <textarea class={classes} placeholder="Enter text..." value={txt.clone()} oninput={on_text}></textarea> }
                             },
                             CompData::ToolCall { name, args } | CompData::ToolResponse { name, args } => {
-                                let is_call = matches!(c.data, CompData::ToolCall { .. });
+                                let _is_call = matches!(c.data, CompData::ToolCall { .. });
                                 
                                 let t_name = t.clone(); let up_name = update.clone();
                                 let on_name = Callback::from(move |e: InputEvent| {

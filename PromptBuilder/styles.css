@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
+  color-scheme: dark;
   --bg-main: #0B0E14;
   --bg-panel: rgba(255, 255, 255, 0.03);
   --bg-card: rgba(255, 255, 255, 0.04);
@@ -242,6 +243,7 @@ button.control-btn:hover {
   cursor: pointer;
   outline: none;
   -webkit-appearance: none;
+  appearance: none;
 }
 
 .role-select option {
@@ -308,9 +310,32 @@ input[type="text"], input[type="number"], select, textarea {
   outline: none;
 }
 
-input[type="text"]:focus, select:focus, textarea:focus {
+input[type="text"]:focus, textarea:focus {
   border-color: var(--accent-base);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+select:focus {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+  outline: none;
+}
+
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%239CA3AF%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+  padding-right: 2rem;
+  cursor: pointer;
+}
+
+select option {
+  background: #1B1E27;
+  color: #C4B5FD;
+  font-weight: 500;
 }
 
 textarea {

@@ -15,7 +15,8 @@
       {
         "title": "Gemma 4 Prompt Builder",
         "width": 1200,
-        "height": 850
+        "height": 850,
+        "theme": "Dark"
       }
     ],
     "security": {
