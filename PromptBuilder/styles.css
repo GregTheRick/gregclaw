@@ -133,6 +133,11 @@ button.primary:hover {
   transform: translateY(-1px) scale(1.02);
 }
 
+button.primary.success {
+  background: var(--accent-teal);
+  box-shadow: 0 4px 15px rgba(20, 184, 166, 0.3);
+}
+
 button.secondary {
   background: rgba(255, 255, 255, 0.1);
 }

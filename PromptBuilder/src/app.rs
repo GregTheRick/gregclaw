@@ -37,6 +37,8 @@ pub enum ComponentType {
     ToolResponse,
     SystemText,
     ToolSchema,
+    Image,
+    Audio,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -45,6 +47,7 @@ pub enum CompData {
     ToolCall { name: String, args: Vec<KVItem> },
     ToolResponse { name: String, args: Vec<KVItem> },
     ToolSchema { name: String, description: String, args: Vec<ToolArg> },
+    Multimodal(String),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -83,7 +86,7 @@ fn format_prompt(turns: &[Turn]) -> String {
                 out.push_str("<|turn>system\n");
                 
                 if t.thinking_enabled {
-                    out.push_str("<|think|>\n");
+                    out.push_str("<|think|>");
                 }
                 
                 for c in &t.components {
@@ -152,7 +155,13 @@ fn format_prompt(turns: &[Turn]) -> String {
             }
             TurnRole::User => {
                 out.push_str("<|turn>user\n");
-                out.push_str(&t.content);
+                for c in &t.components {
+                    match &c.data {
+                        CompData::Text(txt) => out.push_str(txt),
+                        CompData::Multimodal(tok) => out.push_str(tok),
+                        _ => {}
+                    }
+                }
                 out.push_str("<turn|>\n");
             }
             TurnRole::Model => {
@@ -232,12 +241,20 @@ pub fn app() -> Html {
         let next_id = next_id.clone();
         Callback::from(move |role: TurnRole| {
             let mut new_turns = (*turns).clone();
+            let components = if role == TurnRole::User {
+                vec![Component { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text(String::new()) }]
+            } else if role == TurnRole::System {
+                vec![Component { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text("You are a helpful AI.".to_string()) }]
+            } else {
+                vec![]
+            };
+
             new_turns.push(Turn {
                 id: *next_id,
                 role,
-                content: String::new(),
                 thinking_enabled: false,
-                components: vec![],
+                content: String::new(),
+                components,
             });
             turns.set(new_turns);
             next_id.set(*next_id + 1);
@@ -330,6 +347,8 @@ pub fn app() -> Html {
                 ComponentType::ToolCall => CompData::ToolCall { name: String::new(), args: vec![] },
                 ComponentType::ToolResponse => CompData::ToolResponse { name: String::new(), args: vec![] },
                 ComponentType::ToolSchema => CompData::ToolSchema { name: String::new(), description: String::new(), args: vec![] },
+                ComponentType::Image => CompData::Multimodal("<|image|>".to_string()),
+                ComponentType::Audio => CompData::Multimodal("<|audio|>".to_string()),
             };
             
             turn.components.push(Component { id: comp_id, ctype: comp_type, data });
@@ -337,13 +356,22 @@ pub fn app() -> Html {
         })
     };
 
+    let copy_success = use_state(|| false);
+
     let copy_to_clipboard = {
         let text = output.clone();
+        let copy_success = copy_success.clone();
         Callback::from(move |_| {
             let text = text.clone();
+            let copy_success = copy_success.clone();
             spawn_local(async move {
                 let args = serde_wasm_bindgen::to_value(&StringArg { text }).unwrap();
                 let _ = invoke("copy_to_clipboard", args).await;
+                copy_success.set(true);
+                let cs = copy_success.clone();
+                gloo_timers::callback::Timeout::new(2000, move || {
+                    cs.set(false);
+                }).forget();
             });
         })
     };
@@ -384,7 +412,9 @@ pub fn app() -> Html {
                     </button>
                 </div>
                 <div class="actions">
-                    <button onclick={copy_to_clipboard} class="primary">{"Copy Prompt"}</button>
+                    <button onclick={copy_to_clipboard} class={if *copy_success { "primary success" } else { "primary" }}>
+                        { if *copy_success { "Copied!" } else { "Copy Prompt" } }
+                    </button>
                     <button onclick={save_to_file} class="secondary">{"Save Output"}</button>
                 </div>
             </div>
@@ -461,14 +491,16 @@ pub fn app() -> Html {
                                             </>
                                         }
                                     } else if t.role == TurnRole::User {
-                                        let ct2 = t.clone(); let up2 = up.clone();
-                                        let on_content = Callback::from(move |e: InputEvent| {
-                                            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
-                                            let mut new_t = ct2.clone();
-                                            new_t.content = input.value();
-                                            up2.emit((id, new_t));
-                                        });
-                                        html! { <textarea placeholder="User content..." value={t.content.clone()} oninput={on_content}></textarea> }
+                                        html! {
+                                            <>
+                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drop_turn.clone(), on_drag_over.clone(), on_drag_enter.clone(), up.clone()) }
+                                                <div class="add-comp-row">
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::SystemText) })}>{"+ Text"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Image) })}>{"+ Image"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Audio) })}>{"+ Audio"}</button>
+                                                </div>
+                                            </>
+                                        }
                                     } else {
                                         html! {
                                             <>
@@ -548,12 +580,22 @@ fn render_components(
                 
                 html! {
                     <div class="comp-card" draggable="true" ondragstart={on_drag_start} ondrop={on_drop} ondragover={on_drag_over.clone()} ondragenter={on_drag_enter.clone()}>
-                        <div class="comp-card-header" style="cursor: grab;">
-                            <span class="comp-badge">{format!("{:?}", c_type)}</span>
+                        <div class="comp-card-header">
+                            <div style="display:flex; align-items:center; gap:0.5rem; cursor:grab;">
+                                <span style="color:var(--text-dim); font-size:1.2rem; line-height:1;">{"⠿"}</span>
+                                <span class="comp-badge">{format!("{:?}", c_type)}</span>
+                            </div>
                             <button onclick={on_del} class="delete-btn">{"✕"}</button>
                         </div>
                         
                         { match &c.data {
+                            CompData::Multimodal(tok) => {
+                                html! {
+                                    <div style="padding: 1rem; background: rgba(255,255,255,0.05); border-radius: var(--radius-sm); border: 1px dashed var(--border-color); display: flex; align-items: center; justify-content: center; color: var(--accent-base); font-weight: 600;">
+                                        { tok.clone() }
+                                    </div>
+                                }
+                            },
                             CompData::Text(txt) => {
                                 let t_text = t.clone(); let up_text = update.clone();
                                 let on_text = Callback::from(move |e: InputEvent| {
