@@ -15,19 +15,43 @@ struct StringArg {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+pub struct KVItem {
+    pub id: usize,
+    pub key: String,
+    pub val: String,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct ToolArg {
+    pub id: usize,
+    pub name: String,
+    pub arg_type: String, 
+    pub description: String,
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum ComponentType {
     Answer,
     Thinking,
     ToolCall,
     ToolResponse,
+    SystemText,
+    ToolSchema,
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct ModelComponent {
+pub enum CompData {
+    Text(String), 
+    ToolCall { name: String, args: Vec<KVItem> },
+    ToolResponse { name: String, args: Vec<KVItem> },
+    ToolSchema { name: String, description: String, args: Vec<ToolArg> },
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct Component {
     pub id: usize,
-    pub comp_type: ComponentType,
-    pub text1: String, // Answer/Thinking -> content, ToolCall/Response -> tool_name
-    pub text2: String, // ToolCall/Response -> tool_args
+    pub ctype: ComponentType,
+    pub data: CompData,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -41,10 +65,12 @@ pub enum TurnRole {
 pub struct Turn {
     pub id: usize,
     pub role: TurnRole,
-    // For System/User
+    // System
+    pub thinking_enabled: bool,
+    // User
     pub content: String,
-    // For Model
-    pub components: Vec<ModelComponent>,
+    // Model and System (for orderable subparts)
+    pub components: Vec<Component>,
 }
 
 fn format_prompt(turns: &[Turn]) -> String {
@@ -55,8 +81,74 @@ fn format_prompt(turns: &[Turn]) -> String {
         match t.role {
             TurnRole::System => {
                 out.push_str("<|turn>system\n");
-                out.push_str(&t.content);
-                if !t.content.ends_with('\n') && !t.content.is_empty() { out.push('\n'); }
+                
+                if t.thinking_enabled {
+                    out.push_str("<|think|>\n");
+                }
+                
+                for c in &t.components {
+                    match &c.data {
+                        CompData::Text(txt) => {
+                            if !txt.is_empty() {
+                                out.push_str(txt);
+                                if !txt.ends_with('\n') { out.push('\n'); }
+                            }
+                        }
+                        CompData::ToolSchema { name, description, args } => {
+                            let mut args_out = String::new();
+                            let mut required = Vec::new();
+                            
+                            let valid_args: Vec<_> = args.iter().filter(|a| !a.name.trim().is_empty()).collect();
+                            for (i, arg) in valid_args.iter().enumerate() {
+                                if i > 0 { args_out.push(','); }
+                                args_out.push_str(arg.name.trim());
+                                args_out.push_str(":{");
+                                
+                                let mut has_first = false;
+                                if !arg.description.trim().is_empty() {
+                                    args_out.push_str("description:<|\"|>");
+                                    args_out.push_str(arg.description.trim());
+                                    args_out.push_str("<|\"|>");
+                                    has_first = true;
+                                }
+                                
+                                if has_first { args_out.push(','); }
+                                let t_str = if arg.arg_type.trim().is_empty() { "STRING" } else { arg.arg_type.trim() };
+                                args_out.push_str("type:<|\"|>");
+                                args_out.push_str(&t_str.to_uppercase());
+                                args_out.push_str("<|\"|>");
+                                args_out.push('}');
+                                
+                                required.push(format!("<|\"|>{}<|\"|>", arg.name.trim()));
+                            }
+                            
+                            let mut out_str = format!("<|tool>declaration:{}{{", name.trim());
+                            let mut has_part = false;
+                            if !description.trim().is_empty() {
+                                out_str.push_str("description:<|\"|>");
+                                out_str.push_str(description.trim());
+                                out_str.push_str("<|\"|>");
+                                has_part = true;
+                            }
+                            
+                            if !valid_args.is_empty() {
+                                if has_part { out_str.push(','); }
+                                out_str.push_str("parameters:{properties:{");
+                                out_str.push_str(&args_out);
+                                out_str.push_str(" },");
+                                if !required.is_empty() {
+                                    out_str.push_str("required:[");
+                                    out_str.push_str(&required.join(","));
+                                    out_str.push_str("],");
+                                }
+                                out_str.push_str("type:<|\"|>OBJECT<|\"|>} ");
+                            }
+                            out_str.push_str("}<tool|>\n");
+                            out.push_str(&out_str);
+                        }
+                        _ => {}
+                    }
+                }
                 out.push_str("<turn|>\n");
             }
             TurnRole::User => {
@@ -68,25 +160,43 @@ fn format_prompt(turns: &[Turn]) -> String {
             TurnRole::Model => {
                 out.push_str("<|turn>model\n");
                 for c in &t.components {
-                    match c.comp_type {
-                        ComponentType::Answer => {
-                            out.push_str(&c.text1);
-                            if !c.text1.ends_with('\n') && !c.text1.is_empty() { out.push('\n'); }
+                    match &c.data {
+                        CompData::Text(txt) => {
+                            if c.ctype == ComponentType::Answer {
+                                out.push_str(txt);
+                                if !txt.ends_with('\n') && !txt.is_empty() { out.push('\n'); }
+                            } else if c.ctype == ComponentType::Thinking {
+                                out.push_str("<|channel>thought\n");
+                                out.push_str(txt);
+                                if !txt.ends_with('\n') && !txt.is_empty() { out.push('\n'); }
+                                out.push_str("<channel|>\n");
+                            }
                         }
-                        ComponentType::Thinking => {
-                            out.push_str("<|channel>thought\n");
-                            out.push_str(&c.text1);
-                            if !c.text1.ends_with('\n') && !c.text1.is_empty() { out.push('\n'); }
-                            out.push_str("<channel|>\n");
+                        CompData::ToolCall { name, args } | CompData::ToolResponse { name, args } => {
+                            let mut args_chars = String::new();
+                            let valid_args: Vec<_> = args.iter().filter(|kv| !kv.key.trim().is_empty()).collect();
+                            for (i, kv) in valid_args.iter().enumerate() {
+                                if i > 0 { args_chars.push(','); }
+                                args_chars.push_str(kv.key.trim());
+                                args_chars.push(':');
+                                
+                                let val_str = kv.val.trim();
+                                if val_str == "true" || val_str == "false" || val_str.parse::<f64>().is_ok() {
+                                    args_chars.push_str(val_str);
+                                } else {
+                                    args_chars.push_str("<|\"|>");
+                                    args_chars.push_str(&escape_str(val_str));
+                                    args_chars.push_str("<|\"|>");
+                                }
+                            }
+                            
+                            if c.ctype == ComponentType::ToolCall {
+                                out.push_str(&format!("<|tool_call>call:{}{{{}}}<tool_call|>\n", name, args_chars));
+                            } else {
+                                out.push_str(&format!("<|tool_response>response:{}{{{}}}<tool_response|>\n", name, args_chars));
+                            }
                         }
-                        ComponentType::ToolCall => {
-                            let args = escape_str(&c.text2);
-                            out.push_str(&format!("<|tool_call>call:{}{{{}}}<tool_call|>\n", c.text1, args));
-                        }
-                        ComponentType::ToolResponse => {
-                            let args = escape_str(&c.text2);
-                            out.push_str(&format!("<|tool_response>response:{}{{{}}}<tool_response|>\n", c.text1, args));
-                        }
+                        _ => {}
                     }
                 }
                 out.push_str("<turn|>\n");
@@ -102,14 +212,22 @@ pub fn app() -> Html {
         Turn {
             id: 0,
             role: TurnRole::System,
-            content: "You are a helpful AI.".to_string(),
-            components: vec![],
+            content: String::new(),
+            thinking_enabled: false,
+            components: vec![Component {
+                id: 0, ctype: ComponentType::SystemText, data: CompData::Text("You are a helpful AI.".to_string())
+            }],
         }
     ]);
     
     let next_id = use_state(|| 1);
     let next_comp_id = use_state(|| 1);
-    let dragged_index = use_state(|| None::<usize>);
+    
+    // Track outer turn drag
+    let dragged_turn = use_state(|| None::<usize>);
+
+    // Track inner turn component drag -> (turn_index, comp_index)
+    let dragged_comp = use_state(|| None::<(usize, usize)>);
 
     let output = format_prompt(&turns);
 
@@ -122,6 +240,7 @@ pub fn app() -> Html {
                 id: *next_id,
                 role,
                 content: String::new(),
+                thinking_enabled: false,
                 components: vec![],
             });
             turns.set(new_turns);
@@ -148,30 +267,11 @@ pub fn app() -> Html {
         })
     };
 
-    let move_turn = {
-        let turns = turns.clone();
-        Callback::from(move |(index, direction): (usize, isize)| {
-            let mut new_turns = (*turns).clone();
-            let new_index = (index as isize + direction) as usize;
-            if new_index < new_turns.len() {
-                new_turns.swap(index, new_index);
-                turns.set(new_turns);
-            }
-        })
-    };
-
-    let on_drag_start = {
-        let dragged_index = dragged_index.clone();
-        Callback::from(move |index: usize| {
-            dragged_index.set(Some(index));
-        })
-    };
-
-    let on_drop = {
-        let dragged_index = dragged_index.clone();
+    let on_drop_turn = {
+        let dragged_turn = dragged_turn.clone();
         let turns = turns.clone();
         Callback::from(move |target_index: usize| {
-            if let Some(source_index) = *dragged_index {
+            if let Some(source_index) = *dragged_turn {
                 if source_index != target_index {
                     let mut new_turns = (*turns).clone();
                     let item = new_turns.remove(source_index);
@@ -179,40 +279,43 @@ pub fn app() -> Html {
                     turns.set(new_turns);
                 }
             }
-            dragged_index.set(None);
+            dragged_turn.set(None);
         })
     };
 
-    let on_drag_over = Callback::from(|e: DragEvent| {
-        e.prevent_default();
-    });
-
-    let change_role = {
+    let on_drop_comp = {
+        let dragged_comp = dragged_comp.clone();
         let turns = turns.clone();
-        Callback::from(move |(id, new_role): (usize, TurnRole)| {
-            let mut new_turns = (*turns).clone();
-            if let Some(t) = new_turns.iter_mut().find(|t| t.id == id) {
-                t.role = new_role;
-                if t.role != TurnRole::Model {
-                    t.components.clear();
+        Callback::from(move |(target_t_idx, target_c_idx): (usize, usize)| {
+            if let Some((src_t_idx, src_c_idx)) = *dragged_comp {
+                if src_t_idx == target_t_idx && src_c_idx != target_c_idx {
+                    let mut new_turns = (*turns).clone();
+                    let comp = new_turns[src_t_idx].components.remove(src_c_idx);
+                    new_turns[target_t_idx].components.insert(target_c_idx, comp);
+                    turns.set(new_turns);
                 }
             }
-            turns.set(new_turns);
+            dragged_comp.set(None);
         })
     };
 
-    let next_comp_id_clone = next_comp_id.clone();
+    let on_drag_over = Callback::from(|e: DragEvent| { e.prevent_default(); });
+
+    let next_cid = next_comp_id.clone();
     let add_component = {
         let update_turn = update_turn.clone();
         Callback::from(move |(mut turn, comp_type): (Turn, ComponentType)| {
-            let comp_id = *next_comp_id_clone;
-            next_comp_id_clone.set(comp_id + 1);
-            turn.components.push(ModelComponent {
-                id: comp_id,
-                comp_type,
-                text1: String::new(),
-                text2: String::new(),
-            });
+            let comp_id = *next_cid;
+            next_cid.set(comp_id + 1);
+            
+            let data = match comp_type {
+                ComponentType::Answer | ComponentType::Thinking | ComponentType::SystemText => CompData::Text(String::new()),
+                ComponentType::ToolCall => CompData::ToolCall { name: String::new(), args: vec![] },
+                ComponentType::ToolResponse => CompData::ToolResponse { name: String::new(), args: vec![] },
+                ComponentType::ToolSchema => CompData::ToolSchema { name: String::new(), description: String::new(), args: vec![] },
+            };
+            
+            turn.components.push(Component { id: comp_id, ctype: comp_type, data });
             update_turn.emit((turn.id, turn));
         })
     };
@@ -242,193 +345,122 @@ pub fn app() -> Html {
     html! {
         <div class="app-container">
             <div class="sidebar">
-                <h1>{"✨ Gemma 4 Builder"}</h1>
+                <h1>
+                    // Custom SVG icon matching dark theme
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                        <polyline points="3.29 7 12 12 20.71 7"></polyline>
+                        <line x1="12" y1="22" x2="12" y2="12"></line>
+                    </svg>
+                    {"Gemma 4 Builder"}
+                </h1>
                 <div class="tools-panel">
                     <h3>{"Add Block"}</h3>
-                    <button onclick={add_turn.reform(|_| TurnRole::System)}>{"System"}</button>
-                    <button onclick={add_turn.reform(|_| TurnRole::User)}>{"User"}</button>
-                    <button onclick={add_turn.reform(|_| TurnRole::Model)}>{"Model"}</button>
+                    <button onclick={add_turn.reform(|_| TurnRole::System)}>
+                        <span style="color:#A78BFA;">{"⚙️"}</span> {"System"}
+                    </button>
+                    <button onclick={add_turn.reform(|_| TurnRole::User)}>
+                        <span style="color:#60A5FA;">{"👤"}</span> {"User"}
+                    </button>
+                    <button onclick={add_turn.reform(|_| TurnRole::Model)}>
+                        <span style="color:#34D399;">{"🤖"}</span> {"Model"}
+                    </button>
                 </div>
                 <div class="actions">
-                    <button onclick={copy_to_clipboard} class="primary">{"Copy Output"}</button>
-                    <button onclick={save_to_file} class="secondary">{"Save text"}</button>
+                    <button onclick={copy_to_clipboard} class="primary">{"Copy Prompt"}</button>
+                    <button onclick={save_to_file} class="secondary">{"Save Output"}</button>
                 </div>
             </div>
             
             <div class="main-editor">
                 <div class="blocks">
-                    { for turns.iter().enumerate().map(|(index, turn)| {
+                    { for turns.iter().enumerate().map(|(t_idx, turn)| {
                         let id = turn.id;
                         let t = turn.clone();
-                        let on_delete = remove_turn.reform(move |_| id);
-                        let update = update_turn.clone();
-                        let move_up = move_turn.reform(move |_| (index, -1));
-                        let move_down = move_turn.reform(move |_| (index, 1));
+                        let up = update_turn.clone();
                         
-                        let idx = index;
-                        let on_drag_start_cb = {
-                            let f = on_drag_start.clone();
-                            Callback::from(move |e: DragEvent| {
-                                if let Some(data_transfer) = e.data_transfer() {
-                                    let _ = data_transfer.set_data("text/plain", &idx.to_string());
-                                }
-                                f.emit(idx);
-                            })
-                        };
-                        let on_drop_cb = {
-                            let f = on_drop.clone();
-                            Callback::from(move |e: DragEvent| {
-                                e.prevent_default();
-                                f.emit(idx);
-                            })
-                        };
-                        let on_drag_over_cb = on_drag_over.clone();
-
+                        let dt = dragged_turn.clone();
+                        let idx = t_idx;
+                        let on_drag_turn_start = Callback::from(move |e: DragEvent| {
+                            if let Some(dt_transfer) = e.data_transfer() { dt_transfer.set_data("text/plain", &idx.to_string()).unwrap(); }
+                            e.stop_propagation();
+                            dt.set(Some(idx));
+                        });
+                        
+                        let ot = on_drop_turn.clone();
+                        let on_drop_turn_cb = Callback::from(move |e: DragEvent| {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            ot.emit(idx);
+                        });
+                        
                         let on_role_change = {
-                            let change_role = change_role.clone();
+                            let ct = t.clone(); let ut = update_turn.clone();
                             Callback::from(move |e: Event| {
                                 let target: web_sys::HtmlSelectElement = e.target_unchecked_into();
-                                let role = match target.value().as_str() {
-                                    "System" => TurnRole::System,
-                                    "User" => TurnRole::User,
-                                    "Model" => TurnRole::Model,
-                                    _ => TurnRole::User,
-                                };
-                                change_role.emit((id, role));
-                            })
-                        };
-                        let on_content = {
-                            let ct = t.clone();
-                            let up = update.clone();
-                            Callback::from(move |e: InputEvent| {
-                                let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
                                 let mut new_t = ct.clone();
-                                new_t.content = input.value();
-                                up.emit((id, new_t));
+                                new_t.role = match target.value().as_str() {
+                                    "System" => TurnRole::System, "User" => TurnRole::User, "Model" => TurnRole::Model, _ => TurnRole::User,
+                                };
+                                ut.emit((new_t.id, new_t));
                             })
                         };
                         
+                        let on_del_turn = remove_turn.reform(move |_| id);
+                        
                         html! {
-                            <div class="turn-card" draggable="true" ondragstart={on_drag_start_cb} ondrop={on_drop_cb} ondragover={on_drag_over_cb}>
-                                <div class="turn-header" style="display: flex; gap: 0.5rem; align-items: center; cursor: grab;">
-                                    <select class="role-select" onchange={on_role_change}>
+                            <div class="turn-card" draggable="true" ondragstart={on_drag_turn_start} ondrop={on_drop_turn_cb} ondragover={on_drag_over.clone()}>
+                                <div class="turn-header" style="cursor: grab;">
+                                    <select class="role-select" onchange={on_role_change} onclick={|e:MouseEvent| e.stop_propagation()}>
                                         <option value="System" selected={t.role == TurnRole::System}>{"⚙️ System"}</option>
                                         <option value="User" selected={t.role == TurnRole::User}>{"👤 User"}</option>
                                         <option value="Model" selected={t.role == TurnRole::Model}>{"🤖 Model"}</option>
                                     </select>
-                                    <div style="margin-left: auto; display: flex; gap: 0.25rem;">
-                                        { if index > 0 {
-                                            html! { <button onclick={move_up} class="control-btn" title="Move Up">{"↑"}</button> }
-                                        } else { html! {} } }
-                                        { if index + 1 < turns.len() {
-                                            html! { <button onclick={move_down} class="control-btn" title="Move Down">{"↓"}</button> }
-                                        } else { html! {} } }
-                                        <button onclick={on_delete} class="delete-btn" title="Remove">{"✕"}</button>
-                                    </div>
+                                    <button onclick={on_del_turn} class="delete-btn" title="Remove Turn">{"✕"}</button>
                                 </div>
+                                
                                 <div class="turn-body">
-                                    { if t.role == TurnRole::System || t.role == TurnRole::User {
+                                    { if t.role == TurnRole::System {
+                                        let ct1 = t.clone(); let up1 = up.clone();
+                                        let toggle_think = Callback::from(move |_| {
+                                            let mut new_t = ct1.clone();
+                                            new_t.thinking_enabled = !new_t.thinking_enabled;
+                                            up1.emit((id, new_t));
+                                        });
                                         html! {
-                                            <textarea placeholder="Content..." class="content-input" value={t.content} oninput={on_content}></textarea>
+                                            <>
+                                                <label class="toggle-switch" style="margin-bottom:0.5rem;">
+                                                    <input type="checkbox" checked={t.thinking_enabled} onchange={toggle_think} />
+                                                    <div class="toggle-slider"></div>
+                                                    <span>{"Enable <|think|> switch"}</span>
+                                                </label>
+                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drag_over.clone(), next_comp_id.clone(), up.clone()) }
+                                                <div class="add-comp-row">
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::SystemText) })}>{"+ Text"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::ToolSchema) })}>{"+ Schema"}</button>
+                                                </div>
+                                            </>
                                         }
+                                    } else if t.role == TurnRole::User {
+                                        let ct2 = t.clone(); let up2 = up.clone();
+                                        let on_content = Callback::from(move |e: InputEvent| {
+                                            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
+                                            let mut new_t = ct2.clone();
+                                            new_t.content = input.value();
+                                            up2.emit((id, new_t));
+                                        });
+                                        html! { <textarea placeholder="User content..." value={t.content.clone()} oninput={on_content}></textarea> }
                                     } else {
-                                        let t_clone = t.clone();
-                                        let t_ans = t_clone.clone();
-                                        let t_thk = t_clone.clone();
-                                        let t_tc = t_clone.clone();
-                                        let t_tr = t_clone.clone();
                                         html! {
-                                            <div class="model-components">
-                                                <div class="component-list" style="display:flex; flex-direction:column; gap:0.5rem;">
-                                                    { for t.components.iter().enumerate().map(|(c_idx, c)| {
-                                                        let c_id = c.id;
-                                                        let t_up1 = t.clone();
-                                                        let up1 = update.clone();
-                                                        let on_text1 = Callback::from(move |e: InputEvent| {
-                                                            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
-                                                            let mut new_t = t_up1.clone();
-                                                            if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
-                                                                comp.text1 = input.value();
-                                                            }
-                                                            up1.emit((new_t.id, new_t));
-                                                        });
-
-                                                        let t_up2 = t.clone();
-                                                        let up2 = update.clone();
-                                                        let on_text2 = Callback::from(move |e: InputEvent| {
-                                                            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
-                                                            let mut new_t = t_up2.clone();
-                                                            if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
-                                                                comp.text2 = input.value();
-                                                            }
-                                                            up2.emit((new_t.id, new_t));
-                                                        });
-
-                                                        let t_del = t.clone();
-                                                        let up_del = update.clone();
-                                                        let on_del_comp = Callback::from(move |_| {
-                                                            let mut new_t = t_del.clone();
-                                                            new_t.components.retain(|x| x.id != c_id);
-                                                            up_del.emit((new_t.id, new_t));
-                                                        });
-
-                                                        let t_up = t.clone();
-                                                        let up_up = update.clone();
-                                                        let on_move_up = Callback::from(move |_| {
-                                                            let mut new_t = t_up.clone();
-                                                            if c_idx > 0 {
-                                                                new_t.components.swap(c_idx, c_idx - 1);
-                                                                up_up.emit((new_t.id, new_t));
-                                                            }
-                                                        });
-
-                                                        let t_down = t.clone();
-                                                        let up_down = update.clone();
-                                                        let on_move_down = Callback::from(move |_| {
-                                                            let mut new_t = t_down.clone();
-                                                            if c_idx + 1 < new_t.components.len() {
-                                                                new_t.components.swap(c_idx, c_idx + 1);
-                                                                up_down.emit((new_t.id, new_t));
-                                                            }
-                                                        });
-
-                                                        html! {
-                                                            <div class="comp-card" style="border:1px solid var(--border-color); border-radius:6px; padding:0.5rem; background:rgba(255,255,255,0.02);">
-                                                                <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:center;">
-                                                                    <span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">{format!("{:?}", c.comp_type)}</span>
-                                                                    <div style="display:flex; gap:0.25rem;">
-                                                                        { if c_idx > 0 { html!{ <button onclick={on_move_up} class="control-btn" style="padding:0 4px;font-size:0.8rem;">{"↑"}</button> } } else { html!{} } }
-                                                                        { if c_idx + 1 < t.components.len() { html!{ <button onclick={on_move_down} class="control-btn" style="padding:0 4px;font-size:0.8rem;">{"↓"}</button> } } else { html!{} } }
-                                                                        <button onclick={on_del_comp} class="delete-btn" style="padding:0; font-size:0.8rem; margin-left:0.5rem;">{"✕"}</button>
-                                                                    </div>
-                                                                </div>
-                                                                { match c.comp_type {
-                                                                    ComponentType::Answer => html!{ <textarea placeholder="Answer content..." value={c.text1.clone()} oninput={on_text1} /> },
-                                                                    ComponentType::Thinking => html!{ <textarea placeholder="Thinking process..." class="thought-input" value={c.text1.clone()} oninput={on_text1} /> },
-                                                                    ComponentType::ToolCall => html!{ 
-                                                                        <div class="tool-inputs">
-                                                                            <textarea placeholder="Tool Name (e.g. get_weather)" rows="1" value={c.text1.clone()} oninput={on_text1} />
-                                                                            <textarea placeholder="Arguments JSON..." value={c.text2.clone()} oninput={on_text2} />
-                                                                        </div>
-                                                                    },
-                                                                    ComponentType::ToolResponse => html!{ 
-                                                                        <div class="tool-inputs">
-                                                                            <textarea placeholder="Tool Name" rows="1" value={c.text1.clone()} oninput={on_text1} />
-                                                                            <textarea placeholder="Response JSON..." value={c.text2.clone()} oninput={on_text2} />
-                                                                        </div>
-                                                                    },
-                                                                } }
-                                                            </div>
-                                                        }
-                                                    }) }
+                                            <>
+                                                { render_components(&t, t_idx, &dragged_comp, on_drop_comp.clone(), on_drag_over.clone(), next_comp_id.clone(), up.clone()) }
+                                                <div class="add-comp-row">
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Answer) })}>{"+ Answer"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::Thinking) })}>{"+ Thinking"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::ToolCall) })}>{"+ Tool Call"}</button>
+                                                    <button class="add-comp-btn" onclick={add_component.reform({ let t = t.clone(); move |_| (t.clone(), ComponentType::ToolResponse) })}>{"+ Tool Response"}</button>
                                                 </div>
-                                                <div style="display:flex; gap:0.5rem; margin-top:1rem; flex-wrap:wrap;">
-                                                    <button onclick={add_component.reform(move |_| (t_ans.clone(), ComponentType::Answer))} style="font-size:0.75rem; padding:0.25rem 0.5rem; border:1px solid rgba(255,255,255,0.2); border-radius:4px; background:rgba(255,255,255,0.05); color:var(--text-main); cursor:pointer;">{"+ Answer"}</button>
-                                                    <button onclick={add_component.reform(move |_| (t_thk.clone(), ComponentType::Thinking))} style="font-size:0.75rem; padding:0.25rem 0.5rem; border:1px solid rgba(255,255,255,0.2); border-radius:4px; background:rgba(255,255,255,0.05); color:var(--text-main); cursor:pointer;">{"+ Thinking"}</button>
-                                                    <button onclick={add_component.reform(move |_| (t_tc.clone(), ComponentType::ToolCall))} style="font-size:0.75rem; padding:0.25rem 0.5rem; border:1px solid rgba(255,255,255,0.2); border-radius:4px; background:rgba(255,255,255,0.05); color:var(--text-main); cursor:pointer;">{"+ Tool Call"}</button>
-                                                    <button onclick={add_component.reform(move |_| (t_tr.clone(), ComponentType::ToolResponse))} style="font-size:0.75rem; padding:0.25rem 0.5rem; border:1px solid rgba(255,255,255,0.2); border-radius:4px; background:rgba(255,255,255,0.05); color:var(--text-main); cursor:pointer;">{"+ Tool Response"}</button>
-                                                </div>
-                                            </div>
+                                            </>
                                         }
                                     } }
                                 </div>
@@ -440,8 +472,262 @@ pub fn app() -> Html {
 
             <div class="preview-panel">
                 <div class="preview-header">{"Live Prompt Output"}</div>
-                <pre class="preview-content">{ output }</pre>
+                <div class="preview-content">{ output }</div>
             </div>
+        </div>
+    }
+}
+
+// Extracted inner component render to keep HTML tree clean
+fn render_components(
+    t: &Turn, t_idx: usize, 
+    dragged_comp: &UseStateHandle<Option<(usize, usize)>>,
+    on_drop_comp: Callback<(usize, usize)>,
+    on_drag_over: Callback<DragEvent>,
+    comp_id_gen: UseStateHandle<usize>,
+    update: Callback<(usize, Turn)>
+) -> Html {
+    html! {
+        <div class="component-list">
+            { for t.components.iter().enumerate().map(|(c_idx, c)| {
+                let c_id = c.id;
+                let c_type = c.ctype.clone();
+                let tid = t.id;
+                
+                let dc = dragged_comp.clone();
+                let on_drag_start = Callback::from(move |e: DragEvent| {
+                    e.stop_propagation();
+                    dc.set(Some((t_idx, c_idx)));
+                });
+                
+                let odp = on_drop_comp.clone();
+                let on_drop = Callback::from(move |e: DragEvent| {
+                    e.prevent_default();
+                    e.stop_propagation();
+                    odp.emit((t_idx, c_idx));
+                });
+                
+                let t_del = t.clone(); let up_del = update.clone();
+                let on_del = Callback::from(move |_| {
+                    let mut new_t = t_del.clone();
+                    new_t.components.retain(|x| x.id != c_id);
+                    up_del.emit((tid, new_t));
+                });
+                
+                html! {
+                    <div class="comp-card" draggable="true" ondragstart={on_drag_start} ondrop={on_drop} ondragover={on_drag_over.clone()}>
+                        <div class="comp-card-header" style="cursor: grab;">
+                            <span class="comp-badge">{format!("{:?}", c_type)}</span>
+                            <button onclick={on_del} class="delete-btn">{"✕"}</button>
+                        </div>
+                        
+                        { match &c.data {
+                            CompData::Text(txt) => {
+                                let t_text = t.clone(); let up_text = update.clone();
+                                let on_text = Callback::from(move |e: InputEvent| {
+                                    let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
+                                    let mut new_t = t_text.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        comp.data = CompData::Text(input.value());
+                                    }
+                                    up_text.emit((tid, new_t));
+                                });
+                                let classes = if c_type == ComponentType::Thinking { "thought-input" } else { "" };
+                                html! { <textarea class={classes} placeholder="Enter text..." value={txt.clone()} oninput={on_text}></textarea> }
+                            },
+                            CompData::ToolCall { name, args } | CompData::ToolResponse { name, args } => {
+                                let is_call = matches!(c.data, CompData::ToolCall { .. });
+                                
+                                let t_name = t.clone(); let up_name = update.clone();
+                                let on_name = Callback::from(move |e: InputEvent| {
+                                    let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                    let mut new_t = t_name.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        if let CompData::ToolCall { name: ref mut n, .. } | CompData::ToolResponse { name: ref mut n, .. } = comp.data {
+                                            *n = input.value();
+                                        }
+                                    }
+                                    up_name.emit((tid, new_t));
+                                });
+                                
+                                let t_add = t.clone(); let up_add = update.clone();
+                                let add_arg = Callback::from(move |_| {
+                                    let mut new_t = t_add.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        if let CompData::ToolCall { ref mut args, .. } | CompData::ToolResponse { ref mut args, .. } = comp.data {
+                                            let max_id = args.iter().map(|a| a.id).max().unwrap_or(0);
+                                            args.push(KVItem { id: max_id + 1, key: String::new(), val: String::new() });
+                                        }
+                                    }
+                                    up_add.emit((tid, new_t));
+                                });
+
+                                html! {
+                                    <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                                        <input type="text" placeholder="Function Name" value={name.clone()} oninput={on_name} />
+                                        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">{"Arguments:"}</div>
+                                        { for args.iter().map(|kv| {
+                                            let kv_id = kv.id;
+                                            
+                                            let t_k = t.clone(); let up_k = update.clone();
+                                            let on_key = Callback::from(move |e: InputEvent| {
+                                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                                let mut new_t = t_k.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolCall { ref mut args, .. } | CompData::ToolResponse { ref mut args, .. } = comp.data {
+                                                        if let Some(a) = args.iter_mut().find(|x| x.id == kv_id) { a.key = input.value(); }
+                                                    }
+                                                }
+                                                up_k.emit((tid, new_t));
+                                            });
+                                            
+                                            let t_v = t.clone(); let up_v = update.clone();
+                                            let on_val = Callback::from(move |e: InputEvent| {
+                                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                                let mut new_t = t_v.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolCall { ref mut args, .. } | CompData::ToolResponse { ref mut args, .. } = comp.data {
+                                                        if let Some(a) = args.iter_mut().find(|x| x.id == kv_id) { a.val = input.value(); }
+                                                    }
+                                                }
+                                                up_v.emit((tid, new_t));
+                                            });
+                                            
+                                            let t_rm = t.clone(); let up_rm = update.clone();
+                                            let rm_kv = Callback::from(move |_| {
+                                                let mut new_t = t_rm.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolCall { ref mut args, .. } | CompData::ToolResponse { ref mut args, .. } = comp.data {
+                                                        args.retain(|x| x.id != kv_id);
+                                                    }
+                                                }
+                                                up_rm.emit((tid, new_t));
+                                            });
+                                            
+                                            html! {
+                                                <div class="tool-arg-row">
+                                                    <input style="flex:1;" type="text" placeholder="Key" value={kv.key.clone()} oninput={on_key} />
+                                                    <input style="flex:2;" type="text" placeholder="Value" value={kv.val.clone()} oninput={on_val} />
+                                                    <button class="delete-btn" onclick={rm_kv}>{"✕"}</button>
+                                                </div>
+                                            }
+                                        }) }
+                                        <button class="add-comp-btn" style="align-self:flex-start;" onclick={add_arg}>{"+ Arg"}</button>
+                                    </div>
+                                }
+                            },
+                            CompData::ToolSchema { name, description, args } => {
+                                let t_n = t.clone(); let up_n = update.clone();
+                                let on_name = Callback::from(move |e: InputEvent| {
+                                    let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                    let mut new_t = t_n.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        if let CompData::ToolSchema { name: ref mut n, .. } = comp.data { *n = input.value(); }
+                                    }
+                                    up_n.emit((tid, new_t));
+                                });
+                                
+                                let t_d = t.clone(); let up_d = update.clone();
+                                let on_desc = Callback::from(move |e: InputEvent| {
+                                    let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                    let mut new_t = t_d.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        if let CompData::ToolSchema { description: ref mut d, .. } = comp.data { *d = input.value(); }
+                                    }
+                                    up_d.emit((tid, new_t));
+                                });
+                                
+                                let t_add = t.clone(); let up_add = update.clone();
+                                let add_arg = Callback::from(move |_| {
+                                    let mut new_t = t_add.clone();
+                                    if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                        if let CompData::ToolSchema { ref mut args, .. } = comp.data {
+                                            let max_id = args.iter().map(|a| a.id).max().unwrap_or(0);
+                                            args.push(ToolArg { id: max_id + 1, name: String::new(), arg_type: "string".to_string(), description: String::new() });
+                                        }
+                                    }
+                                    up_add.emit((tid, new_t));
+                                });
+
+                                html! {
+                                    <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                                        <div style="display:flex; gap:0.5rem;">
+                                            <input type="text" placeholder="Function" style="flex:1;" value={name.clone()} oninput={on_name} />
+                                            <input type="text" placeholder="Description" style="flex:2;" value={description.clone()} oninput={on_desc} />
+                                        </div>
+                                        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">{"Parameters:"}</div>
+                                        { for args.iter().map(|arg| {
+                                            let a_id = arg.id;
+                                            
+                                            let tk = t.clone(); let uk = update.clone();
+                                            let on_k = Callback::from(move |e: InputEvent| {
+                                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                                let mut new_t = tk.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolSchema { ref mut args, .. } = comp.data {
+                                                        if let Some(a) = args.iter_mut().find(|x| x.id == a_id) { a.name = input.value(); }
+                                                    }
+                                                }
+                                                uk.emit((tid, new_t));
+                                            });
+                                            
+                                            let tt = t.clone(); let ut = update.clone();
+                                            let on_t = Callback::from(move |e: Event| {
+                                                let sel: web_sys::HtmlSelectElement = e.target_unchecked_into();
+                                                let mut new_t = tt.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolSchema { ref mut args, .. } = comp.data {
+                                                        if let Some(a) = args.iter_mut().find(|x| x.id == a_id) { a.arg_type = sel.value(); }
+                                                    }
+                                                }
+                                                ut.emit((tid, new_t));
+                                            });
+                                            
+                                            let td = t.clone(); let ud = update.clone();
+                                            let on_d = Callback::from(move |e: InputEvent| {
+                                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                                let mut new_t = td.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolSchema { ref mut args, .. } = comp.data {
+                                                        if let Some(a) = args.iter_mut().find(|x| x.id == a_id) { a.description = input.value(); }
+                                                    }
+                                                }
+                                                ud.emit((tid, new_t));
+                                            });
+                                            
+                                            let tr = t.clone(); let ur = update.clone();
+                                            let rm_a = Callback::from(move |_| {
+                                                let mut new_t = tr.clone();
+                                                if let Some(comp) = new_t.components.iter_mut().find(|x| x.id == c_id) {
+                                                    if let CompData::ToolSchema { ref mut args, .. } = comp.data {
+                                                        args.retain(|x| x.id != a_id);
+                                                    }
+                                                }
+                                                ur.emit((tid, new_t));
+                                            });
+
+                                            html! {
+                                                <div class="tool-arg-row">
+                                                    <input style="width:120px;" type="text" placeholder="Name" value={arg.name.clone()} oninput={on_k} />
+                                                    <select style="width:90px;" onchange={on_t}>
+                                                        <option value="string" selected={arg.arg_type == "string"}>{"string"}</option>
+                                                        <option value="number" selected={arg.arg_type == "number"}>{"number"}</option>
+                                                        <option value="boolean" selected={arg.arg_type == "boolean"}>{"boolean"}</option>
+                                                        <option value="object" selected={arg.arg_type == "object"}>{"object"}</option>
+                                                    </select>
+                                                    <input style="flex:1;" type="text" placeholder="Description" value={arg.description.clone()} oninput={on_d} />
+                                                    <button class="delete-btn" onclick={rm_a}>{"✕"}</button>
+                                                </div>
+                                            }
+                                        }) }
+                                        <button class="add-comp-btn" style="align-self:flex-start;" onclick={add_arg}>{"+ Param"}</button>
+                                    </div>
+                                }
+                            }
+                        } }
+                    </div>
+                }
+            }) }
         </div>
     }
 }
