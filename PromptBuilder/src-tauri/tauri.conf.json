@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "gemma4-prompt-builder",
   "version": "0.1.0",
-  "identifier": "com.greg.tauri-app",
+  "identifier": "com.gregtherick.gemma4-prompt-builder",
   "build": {
     "beforeDevCommand": "trunk serve",
     "devUrl": "http://localhost:1420",

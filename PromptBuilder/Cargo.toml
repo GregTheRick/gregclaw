@@ -1,6 +1,8 @@
 [package]
-name = "tauri-app-ui"
+name = "gemma4-prompt-builder"
 version = "0.1.0"
+description = "Premium glassmorphic GUI for constructing compliant Gemma 4 prompt workflows."
+authors = ["GregTheRick"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,13 +10,20 @@ edition = "2021"
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["HtmlSelectElement", "DragEvent", "DataTransfer", "HtmlTextAreaElement", "HtmlInputElement"] }
+web-sys = { version = "0.3", features = [
+  "HtmlSelectElement",
+  "DragEvent",
+  "DataTransfer",
+  "HtmlTextAreaElement",
+  "HtmlInputElement",
+] }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1.7"
 gloo-timers = "0.4.0"
+gemma4-prompt-builder-core = { path = "core" }
 
 [workspace]
-members = ["src-tauri"]
+members = ["src-tauri", "core"]

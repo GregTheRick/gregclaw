@@ -9,206 +9,11 @@ extern "C" {
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
 
+use gemma4_prompt_builder_core::{Component as PromptComponent, *};
+
 #[derive(Serialize, Deserialize)]
 struct StringArg {
     text: String,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct KVItem {
-    pub id: usize,
-    pub key: String,
-    pub val: String,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct ToolArg {
-    pub id: usize,
-    pub name: String,
-    pub arg_type: String, 
-    pub description: String,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum ComponentType {
-    Answer,
-    Thinking,
-    ToolCall,
-    ToolResponse,
-    SystemText,
-    ToolSchema,
-    Image,
-    Audio,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum CompData {
-    Text(String), 
-    ToolCall { name: String, args: Vec<KVItem> },
-    ToolResponse { name: String, args: Vec<KVItem> },
-    ToolSchema { name: String, description: String, args: Vec<ToolArg> },
-    Multimodal(String),
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct Component {
-    pub id: usize,
-    pub ctype: ComponentType,
-    pub data: CompData,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum TurnRole {
-    System,
-    User,
-    Model,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct Turn {
-    pub id: usize,
-    pub role: TurnRole,
-    // System
-    pub thinking_enabled: bool,
-    // User
-    pub content: String,
-    // Model and System (for orderable subparts)
-    pub components: Vec<Component>,
-}
-
-fn format_prompt(turns: &[Turn]) -> String {
-    let mut out = String::new();
-    let escape_str = |s: &str| s.replace("\"", "<|\"|>");
-
-    for t in turns {
-        match t.role {
-            TurnRole::System => {
-                out.push_str("<|turn>system\n");
-                
-                if t.thinking_enabled {
-                    out.push_str("<|think|>");
-                }
-                
-                for c in &t.components {
-                    match &c.data {
-                        CompData::Text(txt) => {
-                            if !txt.is_empty() {
-                                out.push_str(txt);
-                            }
-                        }
-                        CompData::ToolSchema { name, description, args } => {
-                            let mut args_out = String::new();
-                            let mut required = Vec::new();
-                            
-                            let valid_args: Vec<_> = args.iter().filter(|a| !a.name.trim().is_empty()).collect();
-                            for (i, arg) in valid_args.iter().enumerate() {
-                                if i > 0 { args_out.push(','); }
-                                args_out.push_str(arg.name.trim());
-                                args_out.push_str(":{");
-                                
-                                let mut has_first = false;
-                                if !arg.description.trim().is_empty() {
-                                    args_out.push_str("description:<|\"|>");
-                                    args_out.push_str(arg.description.trim());
-                                    args_out.push_str("<|\"|>");
-                                    has_first = true;
-                                }
-                                
-                                if has_first { args_out.push(','); }
-                                let t_str = if arg.arg_type.trim().is_empty() { "STRING" } else { arg.arg_type.trim() };
-                                args_out.push_str("type:<|\"|>");
-                                args_out.push_str(&t_str.to_uppercase());
-                                args_out.push_str("<|\"|>");
-                                args_out.push('}');
-                                
-                                required.push(format!("<|\"|>{}<|\"|>", arg.name.trim()));
-                            }
-                            
-                            let mut out_str = format!("<|tool>declaration:{}{{", name.trim());
-                            let mut has_part = false;
-                            if !description.trim().is_empty() {
-                                out_str.push_str("description:<|\"|>");
-                                out_str.push_str(description.trim());
-                                out_str.push_str("<|\"|>");
-                                has_part = true;
-                            }
-                            
-                            if !valid_args.is_empty() {
-                                if has_part { out_str.push(','); }
-                                out_str.push_str("parameters:{properties:{");
-                                out_str.push_str(&args_out);
-                                out_str.push_str(" },");
-                                if !required.is_empty() {
-                                    out_str.push_str("required:[");
-                                    out_str.push_str(&required.join(","));
-                                    out_str.push_str("],");
-                                }
-                                out_str.push_str("type:<|\"|>OBJECT<|\"|>} ");
-                            }
-                            out_str.push_str("}<tool|>");
-                            out.push_str(&out_str);
-                        }
-                        _ => {}
-                    }
-                }
-                out.push_str("<turn|>\n");
-            }
-            TurnRole::User => {
-                out.push_str("<|turn>user\n");
-                for c in &t.components {
-                    match &c.data {
-                        CompData::Text(txt) => out.push_str(txt),
-                        CompData::Multimodal(tok) => out.push_str(tok),
-                        _ => {}
-                    }
-                }
-                out.push_str("<turn|>\n");
-            }
-            TurnRole::Model => {
-                out.push_str("<|turn>model\n");
-                for c in &t.components {
-                    match &c.data {
-                        CompData::Text(txt) => {
-                            if c.ctype == ComponentType::Answer {
-                                out.push_str(txt);
-                            } else if c.ctype == ComponentType::Thinking {
-                                out.push_str("<|channel>thought\n");
-                                out.push_str(txt);
-                                out.push_str("<channel|>");
-                            }
-                        }
-                        CompData::ToolCall { name, args } | CompData::ToolResponse { name, args } => {
-                            let mut args_chars = String::new();
-                            let valid_args: Vec<_> = args.iter().filter(|kv| !kv.key.trim().is_empty()).collect();
-                            for (i, kv) in valid_args.iter().enumerate() {
-                                if i > 0 { args_chars.push(','); }
-                                args_chars.push_str(kv.key.trim());
-                                args_chars.push(':');
-                                
-                                let val_str = kv.val.trim();
-                                if val_str == "true" || val_str == "false" || val_str.parse::<f64>().is_ok() {
-                                    args_chars.push_str(val_str);
-                                } else {
-                                    args_chars.push_str("<|\"|>");
-                                    args_chars.push_str(&escape_str(val_str));
-                                    args_chars.push_str("<|\"|>");
-                                }
-                            }
-                            
-                            if c.ctype == ComponentType::ToolCall {
-                                out.push_str(&format!("<|tool_call>call:{}{{{}}}<tool_call|>", name, args_chars));
-                            } else {
-                                out.push_str(&format!("<|tool_response>response:{}{{{}}}<tool_response|>", name, args_chars));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                out.push_str("<turn|>\n");
-            }
-        }
-    }
-    out
 }
 
 #[function_component(App)]
@@ -217,9 +22,8 @@ pub fn app() -> Html {
         Turn {
             id: 0,
             role: TurnRole::System,
-            content: String::new(),
             thinking_enabled: false,
-            components: vec![Component {
+            components: vec![PromptComponent {
                 id: 0, ctype: ComponentType::SystemText, data: CompData::Text("You are a helpful AI.".to_string())
             }],
         }
@@ -242,9 +46,9 @@ pub fn app() -> Html {
         Callback::from(move |role: TurnRole| {
             let mut new_turns = (*turns).clone();
             let components = if role == TurnRole::User {
-                vec![Component { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text(String::new()) }]
+                vec![PromptComponent { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text(String::new()) }]
             } else if role == TurnRole::System {
-                vec![Component { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text("You are a helpful AI.".to_string()) }]
+                vec![PromptComponent { id: *next_id * 100, ctype: ComponentType::SystemText, data: CompData::Text("You are a helpful AI.".to_string()) }]
             } else {
                 vec![]
             };
@@ -253,7 +57,6 @@ pub fn app() -> Html {
                 id: *next_id,
                 role,
                 thinking_enabled: false,
-                content: String::new(),
                 components,
             });
             turns.set(new_turns);
@@ -351,7 +154,7 @@ pub fn app() -> Html {
                 ComponentType::Audio => CompData::Multimodal("<|audio|>".to_string()),
             };
             
-            turn.components.push(Component { id: comp_id, ctype: comp_type, data });
+            turn.components.push(PromptComponent { id: comp_id, ctype: comp_type, data });
             update_turn.emit((turn.id, turn));
         })
     };

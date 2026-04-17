@@ -1,8 +1,8 @@
 [package]
-name = "tauri-app"
+name = "gemma4-prompt-builder-app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Standalone Desktop and Headless CLI tool for the Gemma 4 Prompt Builder."
+authors = ["GregTheRick"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,4 +24,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-clipboard-manager = "2.3.2"
-
+gemma4-prompt-builder-core = { path = "../core" }
+clap = { version = "4.5", features = ["derive"] }
