@@ -19,10 +19,22 @@ async fn save_to_file(app: tauri::AppHandle, text: String) -> Result<(), String>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("GTK_THEME", "Adwaita:dark");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            use tauri::Manager;
+            for window in app.webview_windows().values() {
+                let _ = window.set_theme(Some(tauri::Theme::Dark));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![copy_to_clipboard, save_to_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

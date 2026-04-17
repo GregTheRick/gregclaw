@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
-  color-scheme: dark;
+  color-scheme: dark !important;
   --bg-main: #0B0E14;
   --bg-panel: rgba(255, 255, 255, 0.03);
   --bg-card: rgba(255, 255, 255, 0.04);
@@ -9,7 +9,17 @@
   --text-main: #FFFFFF;
   --text-muted: #9CA3AF;
   --text-dim: #6B7280;
-  
+  color: var(--text-main);
+  background: var(--bg-main);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: dark !important;
+  }
+}
+
+:root {
   --accent-base: #6366F1;
   --accent-glow: rgba(99, 102, 241, 0.6);
   --accent-purple: #8B5CF6;
