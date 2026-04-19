@@ -236,6 +236,18 @@ function extractBase64(url: unknown): string | undefined {
  * Ensures turns are consistent (e.g., non-empty, logical role transitions).
  */
 function cleanTurns(turns: GTRChatTurn[]): GTRChatTurn[] {
-  // Remove empty turns
+  // Filter out 'thinking' components from model turns followed by a user turn.
+  // This keeps history clean and focused on results for older model turns.
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (turn.role === "model") {
+      const hasUserTurnAfter = turns.slice(i + 1).some((t) => t.role === "user");
+      if (hasUserTurnAfter) {
+        turn.components = turn.components.filter((c) => c.ctype !== "thinking");
+      }
+    }
+  }
+
+  // Remove turns that become empty after filtering
   return turns.filter((t) => t.components.length > 0);
 }
