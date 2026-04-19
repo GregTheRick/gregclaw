@@ -98,6 +98,8 @@ export function createGemma4StreamFn(
           options: ollamaOptions,
         };
 
+        log.info(`Sending GTRChat request to ${generateUrl} (${turns.length} turns)`);
+
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
           ...defaultHeaders,
@@ -119,6 +121,21 @@ export function createGemma4StreamFn(
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => "unknown error");
+          log.error(`GTRChat error ${response.status}: ${errorText}`);
+          if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
+            try {
+              const logPath = process.env.OPENCLAW_GEMMA4_LOG_FILE;
+              const logContent =
+                `\n[${new Date().toISOString()}] ERROR ${response.status}\n` +
+                `URL: ${generateUrl}\n` +
+                `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
+                `RESPONSE: ${errorText}\n`;
+              const fs = await import("node:fs");
+              fs.appendFileSync(logPath, logContent);
+            } catch (e) {
+              log.warn(`Failed to write Gemma 4 error log: ${String(e)}`);
+            }
+          }
           throw new Error(`${response.status} ${errorText}`);
         }
         if (!response.body) {
@@ -258,6 +275,21 @@ export function createGemma4StreamFn(
           message: partialResp,
         });
         stream.end();
+
+        if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
+          try {
+            const logPath = process.env.OPENCLAW_GEMMA4_LOG_FILE;
+            const logContent =
+              `\n[${new Date().toISOString()}] SUCCESS\n` +
+              `URL: ${generateUrl}\n` +
+              `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
+              `RESPONSE: ${JSON.stringify(assistantContent, null, 2)}\n`;
+            const fs = await import("node:fs");
+            fs.appendFileSync(logPath, logContent);
+          } catch (e) {
+            log.warn(`Failed to write Gemma 4 success log: ${String(e)}`);
+          }
+        }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         stream.push({
