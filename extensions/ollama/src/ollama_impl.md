@@ -24,7 +24,7 @@ If the model decides to use a tool, it outputs a `<|tool_call>`, which the API p
 
 1. The engine swallows the `<|tool_response>` token and stops.
 2. The GTR API emits: `{"type": "done", "status": "call_wait"}`.
-3. **Client Action**: The orchestrator must parse the tool call, execute the function locally, and append a **single** `model` turn containing _both_ the `toolcall` and `toolresponse` components. Do _not_ prompt the user. You must immediately send this updated history back to `/api/gtrchat` so the model can read the result and continue reasoning.
+3. **Client Action**: The orchestrator must parse the tool call, execute the function locally, and append a **single** `model` turn containing _both_ the `tool_call` and `tool_response` components. Do _not_ prompt the user. You must immediately send this updated history back to `/api/gtrchat` so the model can read the result and continue reasoning.
 
 #### Scenario 2: Model Answers the User (`status: "complete"`)
 
@@ -38,7 +38,7 @@ If the model does not call a tool or has finished providing a final answer after
 
 #### 1. Initial Request
 
-The client sends the system instructions, tool schema, and the user's initial query. Notice `thinking_enabled: true` to trigger the `<|think|>` protocol.
+The client sends the system instructions, tool schema (using the `tool_schema` type), and the user's initial query.
 
 ```json
 {
@@ -82,7 +82,7 @@ The API streams back `thinking` chunks, then a parsed tool call, and finishes wi
 
 The client sees `status: "call_wait"`. It executes `get_weather("Tokyo")`, gets `{ "temp": 15 }`, and makes a **new request**.
 
-_Crucial Implementation Rule_: The historical tool call request (`toolcall`) and the execution result (`toolresponse`) must be grouped together under a `model` turn.
+_Crucial Implementation Rule_: The historical tool call request (`tool_call`) and the execution result (`tool_response`) must be grouped together under a `model` turn.
 
 ```json
 {
@@ -144,16 +144,16 @@ The client sees `status: "complete"`, renders the text to the user, and waits fo
 
 Each component has a `ctype` (Component Type) which determines the structure of its `data` field.
 
-| `ctype`         | Data Structure      | Description                                         |
-| :-------------- | :------------------ | :-------------------------------------------------- |
-| `system_text`   | `GTRTextData`       | Core system instructions.                           |
-| `answer`        | `GTRTextData`       | Standard user queries or model text responses.      |
-| `thinking`      | `GTRTextData`       | Historical reasoning blocks for context retention.  |
-| `tool_schema`   | `GTRToolSchemaData` | Definitions of functions available to the model.    |
-| `tool_call`     | `GTRToolCallData`   | A record of a function call performed by the model. |
-| `tool_response` | `GTRToolCallData`   | The result of a function execution.                 |
-| `image`         | `GTRMultimodalData` | Base64-encoded image data.                          |
-| `audio`         | `GTRMultimodalData` | Base64-encoded audio data.                          |
+| `ctype`         | Data Structure      | Description                                                                        |
+| :-------------- | :------------------ | :--------------------------------------------------------------------------------- |
+| `system_text`   | `GTRTextData`       | **Required**. Core system instructions. Note: `systemtext` is no longer supported. |
+| `answer`        | `GTRTextData`       | Standard user queries or model text responses.                                     |
+| `thinking`      | `GTRTextData`       | Historical reasoning blocks for context retention.                                 |
+| `tool_schema`   | `GTRToolSchemaData` | Definitions of functions available to the model. (Alias: `toolschema`)             |
+| `tool_call`     | `GTRToolCallData`   | A record of a function call performed by the model. (Alias: `toolcall`)            |
+| `tool_response` | `GTRToolCallData`   | The result of a function execution. (Alias: `tool_response`)                       |
+| `image`         | `GTRMultimodalData` | Base64-encoded image data.                                                         |
+| `audio`         | `GTRMultimodalData` | Base64-encoded audio data.                                                         |
 
 ---
 
@@ -167,13 +167,24 @@ Each component has a `ctype` (Component Type) which determines the structure of 
 
 ### `GTRToolSchemaData`
 
+Standardized tool definitions using industry-standard JSON Schema.
+
 ```json
 {
   "tools": [
     {
-      "name": "get_weather",
-      "description": "Get current weather",
-      "args": [{ "name": "location", "arg_type": "string", "description": "City" }]
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": { "type": "string", "description": "City name" }
+          },
+          "required": ["location"]
+        }
+      }
     }
   ]
 }
@@ -181,7 +192,7 @@ Each component has a `ctype` (Component Type) which determines the structure of 
 
 ### `GTRToolCallData`
 
-Used for both `toolcall` (requests) and `tool_call` (events).
+Used for both `tool_call` (requests) and `tool_call` (events).
 
 ```json
 {
@@ -223,3 +234,42 @@ To ensure that tool call arguments are parsed cleanly as JSON, the parser implem
 
 The `ollama-engine` runner delivers **TokenIDs** alongside content in every completion event.
 Because system boundaries like `<|tool_response>` (50) and `<turn|>` (106) are defined as hard EOS tokens within the `Gemma 4` vocabulary, they are intentionally dropped sequence-terminators. Once emitted internally, the pipeline gracefully shuts down, bypassing standard text streams to ensure structural integrity across agentic jumps.
+
+---
+
+## Debugging and Inspection
+
+For deep inspection of how your JSON turns are being converted into model-native structural tokens, you can use the following environment variable:
+
+### `OLLAMA_GTR_PROMPT_DEBUG=1`
+
+When this variable is set, the server will print the raw incoming JSON request, the full detokenized prompt, and a granular token-by-token trace to the console before every inference run.
+
+### `OLLAMA_GTR_PROMPT_DEBUG_FILE=path/to/log.txt`
+
+Optional. If provided along with `OLLAMA_GTR_PROMPT_DEBUG=1`, the debug output will be redirected to the specified file instead of the terminal. The file is opened in **append mode**, allowing you to capture a full multi-turn conversation sequence.
+
+**Output Example:**
+
+```text
+--- GTR REQUEST JSON START ---
+{
+  "model": "gemma4:31b",
+  "turns": [...]
+}
+--- GTR REQUEST JSON END ---
+level=INFO msg="--- GTR PROMPT START ---"
+<|turn|>system
+<|tool|>declaration:get_weather{
+    description:<|"|>Get current weather<|"|>,
+...
+level=INFO msg="--- GTR PROMPT END ---"
+level=INFO msg="prompt_token_trace"
+   0:    105 -> "<|turn|>"
+   1:   2364 -> "user"
+   2:    107 -> "\n"
+   3:   3689 -> "What"
+...
+```
+
+This is the single most effective way to debug prompt-injection attempts or boundary errors in your orchestrator logic.

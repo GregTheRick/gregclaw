@@ -15,9 +15,12 @@ export interface GTRTextData {
 }
 
 export interface GTRTool {
-  name: string;
-  description: string;
-  args: Array<{ name: string; arg_type: string; description: string }>;
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 }
 
 export interface GTRToolSchemaData {

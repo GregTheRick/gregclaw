@@ -29,21 +29,15 @@ export function convertToGTRFormat(
 
   if (options.tools && options.tools.length > 0) {
     const tools: GTRTool[] = options.tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      args: Object.entries(
-        ((t.parameters as Record<string, unknown> | undefined)?.properties as Record<
-          string,
-          unknown
-        >) || {},
-      ).map(([name, prop]) => {
-        const p = prop as Record<string, unknown>;
-        return {
-          name,
-          arg_type: (p.type as string)?.toLowerCase() || "string",
-          description: (p.description as string) || "",
-        };
-      }),
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: (t.parameters as Record<string, unknown>) || {
+          type: "object",
+          properties: {},
+        },
+      },
     }));
 
     systemComponents.push({

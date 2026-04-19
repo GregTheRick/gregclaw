@@ -7,6 +7,7 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "@mariozechner/pi-ai";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { isNonSecretApiKeyMarker } from "openclaw/plugin-sdk/provider-auth";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { convertToGTRFormat } from "./gemma4-gtr-formatter.js";
@@ -274,7 +275,6 @@ export function createGemma4StreamFn(
           reason: stopReason,
           message: partialResp,
         });
-        stream.end();
 
         if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
           try {
@@ -291,16 +291,27 @@ export function createGemma4StreamFn(
           }
         }
       } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+
+        const errorMessage = formatErrorMessage(err);
+        log.error(`Gemma 4 stream error: ${errorMessage}`);
+
         stream.push({
-          type: "done",
-          reason: "stop",
-          message: {
+          type: "error",
+          reason: "error",
+          error: {
             role: "assistant",
+            api: model.api,
+            provider: "ollama",
+            model: model.id,
+            content: [],
             error: errorMessage,
             stopReason: "error",
           } as unknown as AssistantMessage,
         });
+      } finally {
         stream.end();
       }
     };
