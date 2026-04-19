@@ -283,7 +283,7 @@ function buildStreamAssistantMessage(params: {
   };
 }
 
-function buildStreamErrorAssistantMessage(params: {
+export function buildStreamErrorAssistantMessage(params: {
   model: StreamModelDescriptor;
   errorMessage: string;
   timestamp?: number;

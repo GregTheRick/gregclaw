@@ -13,7 +13,11 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { convertToGTRFormat } from "./gemma4-gtr-formatter.js";
 import type { GTRChatRequest, GTRChatResponseEvent } from "./gemma4-gtr-types.js";
 import { parseJsonPreservingUnsafeIntegers } from "./ollama-json.js";
-import { OLLAMA_GTRCHAT_URL_PATH, OLLAMA_NATIVE_BASE_URL } from "./stream.js";
+import {
+  OLLAMA_GTRCHAT_URL_PATH,
+  OLLAMA_NATIVE_BASE_URL,
+  buildStreamErrorAssistantMessage,
+} from "./stream.js";
 
 const log = createSubsystemLogger("ollama-gemma4-stream");
 
@@ -323,7 +327,10 @@ export function createGemma4StreamFn(
           stream.push({
             type: "error",
             reason: "error",
-            error: errorMessage,
+            error: buildStreamErrorAssistantMessage({
+              model,
+              errorMessage: errorMessage,
+            }),
           });
         }
       } finally {

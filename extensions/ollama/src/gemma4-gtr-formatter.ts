@@ -89,7 +89,7 @@ export function convertToGTRFormat(
     }
 
     // Merge tool_response into the preceding model turn if possible
-    if (role === "tool" || role === "toolResult") {
+    if (msg.role === "toolResult") {
       const lastTurn = turns[turns.length - 1];
       if (lastTurn && lastTurn.role === "model") {
         lastTurn.components.push(...components.map((c) => ({ ctype: c.ctype, data: c.data })));
