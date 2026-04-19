@@ -294,6 +294,7 @@ export function createGemma4StreamFn(
             if (chunk.status === "call_wait") {
               haltEncountered = true;
             }
+            break;
           }
         }
 
