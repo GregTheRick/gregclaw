@@ -1,5 +1,11 @@
 import type { Message, Tool } from "@mariozechner/pi-ai";
-import type { GTRChatComponent, GTRChatTurn, GTRRole, GTRTool } from "./gemma4-gtr-types.js";
+import type {
+  GTRChatComponent,
+  GTRChatTurn,
+  GTRRole,
+  GTRTool,
+  GTRToolCallData,
+} from "./gemma4-gtr-types.js";
 import { parseJsonObjectPreservingUnsafeIntegers } from "./ollama-json.js";
 
 interface GTRFormatterOptions {
@@ -7,6 +13,8 @@ interface GTRFormatterOptions {
   tools?: Tool[];
   thinkEnabled?: boolean;
 }
+
+type ExtractedComponent = GTRChatComponent & { toolCallId?: string };
 
 /**
  * Converts Pi-Agent messages and tools into the GTR (Gemma Token-level Robust)
@@ -54,23 +62,58 @@ export function convertToGTRFormat(
     });
   }
 
-  // 2. Conversation Turns
+  // 2. Conversation Turns with PID tracking and grouping
+  const callIdToPid = new Map<string, string>();
+  let nextPid = 1;
+
   for (const msg of messages) {
     const role: GTRRole = msg.role === "assistant" ? "model" : (msg.role as GTRRole);
     const components = extractGTRComponents(msg);
 
-    if (components.length > 0) {
-      turns.push({
+    if (components.length === 0) {
+      continue;
+    }
+
+    // Assign PIDs to tool calls and responses
+    for (const comp of components) {
+      if (comp.ctype === "tool_call" && comp.toolCallId) {
+        const pid = String(nextPid++);
+        callIdToPid.set(comp.toolCallId, pid);
+        (comp.data as GTRToolCallData).pid = pid;
+      } else if (comp.ctype === "tool_response" && comp.toolCallId) {
+        const pid = callIdToPid.get(comp.toolCallId);
+        if (pid) {
+          (comp.data as GTRToolCallData).pid = pid;
+        }
+      }
+    }
+
+    // Merge tool_response into the preceding model turn if possible
+    if (role === "tool" || role === "toolResult") {
+      const lastTurn = turns[turns.length - 1];
+      if (lastTurn && lastTurn.role === "model") {
+        lastTurn.components.push(...components.map((c) => ({ ctype: c.ctype, data: c.data })));
+        continue;
+      }
+      // If no preceding model turn (rare), fall through to create a new model turn
+      const turn: GTRChatTurn = {
+        role: "model",
+        components: components.map((c) => ({ ctype: c.ctype, data: c.data })),
+      };
+      turns.push(turn);
+    } else {
+      const turn: GTRChatTurn = {
         role,
-        components,
-      });
+        components: components.map((c) => ({ ctype: c.ctype, data: c.data })),
+      };
+      turns.push(turn);
     }
   }
 
   return cleanTurns(turns);
 }
 
-function extractGTRComponents(msg: Message): GTRChatComponent[] {
+function extractGTRComponents(msg: Message): ExtractedComponent[] {
   const content = msg.content;
   if (typeof content === "string") {
     return [{ ctype: "answer", data: { text: content } }];
@@ -80,7 +123,7 @@ function extractGTRComponents(msg: Message): GTRChatComponent[] {
     return [];
   }
 
-  const result: GTRChatComponent[] = [];
+  const result: ExtractedComponent[] = [];
 
   for (const part of content) {
     if (!part || typeof part !== "object") {
@@ -97,8 +140,10 @@ function extractGTRComponents(msg: Message): GTRChatComponent[] {
     } else if (p.type === "toolCall" || p.type === "tool_use") {
       const args = parseJsonObjectPreservingUnsafeIntegers(p.arguments || p.input) ?? {};
       const name = typeof p.name === "string" ? p.name : "";
+      const id = typeof p.id === "string" ? p.id : undefined;
       result.push({
         ctype: "tool_call",
+        toolCallId: id,
         data: {
           name,
           args: Object.entries(args).map(([key, val]) => ({ key, val: String(val) })),
@@ -112,8 +157,10 @@ function extractGTRComponents(msg: Message): GTRChatComponent[] {
           ? { result: rawResult }
           : (rawResult as Record<string, unknown> | undefined);
       const name = typeof p.name === "string" ? p.name : "";
+      const toolCallId = typeof p.toolCallId === "string" ? p.toolCallId : undefined;
       result.push({
         ctype: "tool_response",
+        toolCallId,
         data: {
           name,
           args: Object.entries(resultObj || {}).map(([key, val]) => ({ key, val: String(val) })),

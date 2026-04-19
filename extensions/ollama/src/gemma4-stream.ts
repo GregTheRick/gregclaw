@@ -72,6 +72,13 @@ export function createGemma4StreamFn(
     const stream = createAssistantMessageEventStream();
 
     const run = async () => {
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const abortHandler = () => {
+        if (reader) {
+          reader.cancel().catch(() => {});
+        }
+      };
+
       try {
         const messages = context.messages ? [...context.messages] : [];
 
@@ -113,6 +120,8 @@ export function createGemma4StreamFn(
           headers.Authorization = `Bearer ${options.apiKey}`;
         }
 
+        options?.signal?.addEventListener("abort", abortHandler);
+
         const response = await fetch(generateUrl, {
           method: "POST",
           headers,
@@ -143,7 +152,7 @@ export function createGemma4StreamFn(
           throw new Error("Ollama API returned empty response body");
         }
 
-        const reader = response.body.getReader();
+        reader = response.body.getReader();
 
         let haltEncountered = false;
         let assistantContent: (TextContent | ThinkingContent | ToolCall)[] = [];
@@ -291,27 +300,34 @@ export function createGemma4StreamFn(
           }
         }
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === "AbortError") {
-          return;
+        const isAbort = err instanceof Error && err.name === "AbortError";
+        const errorMessage = formatErrorMessage(err);
+        if (!isAbort) {
+          log.error(`Gemma 4 stream error: ${errorMessage}`);
         }
 
-        const errorMessage = formatErrorMessage(err);
-        log.error(`Gemma 4 stream error: ${errorMessage}`);
-
-        stream.push({
-          type: "error",
-          reason: "error",
-          error: {
-            role: "assistant",
-            api: model.api,
-            provider: "ollama",
-            model: model.id,
-            content: [],
+        if (isAbort) {
+          stream.push({
+            type: "done",
+            reason: "stop",
+            message: {
+              role: "assistant",
+              api: model.api,
+              provider: "ollama",
+              model: model.id,
+              content: [],
+              stopReason: "stop",
+            } as unknown as AssistantMessage,
+          });
+        } else {
+          stream.push({
+            type: "error",
+            reason: "error",
             error: errorMessage,
-            stopReason: "error",
-          } as unknown as AssistantMessage,
-        });
+          });
+        }
       } finally {
+        options?.signal?.removeEventListener("abort", abortHandler);
         stream.end();
       }
     };
