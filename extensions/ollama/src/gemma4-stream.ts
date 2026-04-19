@@ -21,7 +21,18 @@ import {
 
 const log = createSubsystemLogger("ollama-gemma4-stream");
 
-const GTR_INACTIVITY_TIMEOUT_MS = 30000;
+async function logGemma4ToFile(logContent: string) {
+  if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
+    try {
+      const fs = await import("node:fs");
+      fs.appendFileSync(process.env.OPENCLAW_GEMMA4_LOG_FILE, logContent);
+    } catch (e) {
+      log.warn(`Failed to write Gemma 4 log: ${String(e)}`);
+    }
+  }
+}
+
+const GTR_INACTIVITY_TIMEOUT_MS = 60000;
 
 export async function* decodeGenerateNdjsonStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -36,21 +47,26 @@ export async function* decodeGenerateNdjsonStream(
     // Implement inactivity timeout for each read operation
     const readPromise = reader.read();
     const timeoutPromise = new Promise<never>((_, reject) => {
+      const abortController = new AbortController();
       const timer = setTimeout(() => {
-        reject(new Error("GTR_STREAM_STALL: No data received for 30s"));
+        reject(
+          new Error(
+            `GTR_STREAM_STALL: No data received for 60s. Current buffer: ${buffer.slice(-100)}`,
+          ),
+        );
       }, GTR_INACTIVITY_TIMEOUT_MS);
 
-      signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          reject(new Error("AbortError"));
-        },
-        { once: true },
-      );
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new Error("AbortError"));
+      };
 
-      // We need to clear the timer if the read resolves
-      void readPromise.finally(() => clearTimeout(timer));
+      signal?.addEventListener("abort", onAbort, { once: true, signal: abortController.signal });
+
+      void readPromise.finally(() => {
+        clearTimeout(timer);
+        abortController.abort();
+      });
     });
 
     const { done, value } = await Promise.race([readPromise, timeoutPromise]);
@@ -106,6 +122,10 @@ export function createGemma4StreamFn(
           reader.cancel().catch(() => {});
         }
       };
+
+      if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
+        log.info(`Active GTR logging to: ${process.env.OPENCLAW_GEMMA4_LOG_FILE}`);
+      }
 
       let hasSeenDoneStatus = false;
       let hasSeenContent = false;
@@ -163,20 +183,14 @@ export function createGemma4StreamFn(
         if (!response.ok) {
           const errorText = await response.text().catch(() => "unknown error");
           log.error(`GTRChat error ${response.status}: ${errorText}`);
-          if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
-            try {
-              const logPath = process.env.OPENCLAW_GEMMA4_LOG_FILE;
-              const logContent =
-                `\n[${new Date().toISOString()}] ERROR ${response.status}\n` +
-                `URL: ${generateUrl}\n` +
-                `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
-                `RESPONSE: ${errorText}\n`;
-              const fs = await import("node:fs");
-              fs.appendFileSync(logPath, logContent);
-            } catch (e) {
-              log.warn(`Failed to write Gemma 4 error log: ${String(e)}`);
-            }
-          }
+
+          await logGemma4ToFile(
+            `\n[${new Date().toISOString()}] ERROR ${response.status}\n` +
+              `URL: ${generateUrl}\n` +
+              `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
+              `RESPONSE: ${errorText}\n`,
+          );
+
           throw new Error(`${response.status} ${errorText}`);
         }
         if (!response.body) {
@@ -219,6 +233,8 @@ export function createGemma4StreamFn(
           if (chunk.error) {
             throw new Error(chunk.error);
           }
+
+          await logGemma4ToFile(`[${new Date().toISOString()}] CHUNK: ${chunk.type}\n`);
 
           if (chunk.type === "text" && chunk.content) {
             hasSeenContent = true;
@@ -327,20 +343,12 @@ export function createGemma4StreamFn(
           message: partialResp,
         });
 
-        if (process.env.OPENCLAW_GEMMA4_LOG_FILE) {
-          try {
-            const logPath = process.env.OPENCLAW_GEMMA4_LOG_FILE;
-            const logContent =
-              `\n[${new Date().toISOString()}] SUCCESS\n` +
-              `URL: ${generateUrl}\n` +
-              `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
-              `RESPONSE: ${JSON.stringify(assistantContent, null, 2)}\n`;
-            const fs = await import("node:fs");
-            fs.appendFileSync(logPath, logContent);
-          } catch (e) {
-            log.warn(`Failed to write Gemma 4 success log: ${String(e)}`);
-          }
-        }
+        await logGemma4ToFile(
+          `\n[${new Date().toISOString()}] SUCCESS\n` +
+            `URL: ${generateUrl}\n` +
+            `REQUEST: ${JSON.stringify(body, null, 2)}\n` +
+            `RESPONSE: ${JSON.stringify(assistantContent, null, 2)}\n`,
+        );
       } catch (err: unknown) {
         const isAbort =
           err instanceof Error && (err.name === "AbortError" || err.message === "AbortError");
@@ -363,13 +371,23 @@ export function createGemma4StreamFn(
             } as unknown as AssistantMessage,
           });
         } else {
+          const errorEvent = buildStreamErrorAssistantMessage({
+            model,
+            errorMessage: errorMessage,
+          });
+
+          const logMsg =
+            `\n[${new Date().toISOString()}] CATCH_ERROR: ${errorMessage}\n` +
+            `URL: ${generateUrl}\n` +
+            `CONTENT_SO_FAR: ${JSON.stringify(assistantContent, null, 2)}\n`;
+
+          log.error(`Gemma 4 failure: ${errorMessage}`);
+          await logGemma4ToFile(logMsg);
+
           stream.push({
             type: "error",
             reason: "error",
-            error: buildStreamErrorAssistantMessage({
-              model,
-              errorMessage: errorMessage,
-            }),
+            error: errorEvent,
           });
         }
       } finally {

@@ -87,12 +87,12 @@ describe("createGemma4StreamFn - Terminal Conditions", () => {
       return events;
     })();
 
-    // Advance time to trigger the 30s timeout
-    await vi.advanceTimersByTimeAsync(35000);
+    // Advance time to trigger the 60s timeout
+    await vi.advanceTimersByTimeAsync(65000);
 
     const events = await eventPromise;
     expect(events.map((e) => e.type)).toContain("error");
     const errorEvent = events.find((e) => e.type === "error") as any;
-    expect(errorEvent.error.errorMessage).toContain("GTR_STREAM_STALL");
+    expect(errorEvent.error.errorMessage).toContain("GTR_STREAM_STALL: No data received for 60s");
   });
 });
