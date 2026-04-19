@@ -37,6 +37,7 @@ import {
 const log = createSubsystemLogger("ollama-stream");
 
 export const OLLAMA_NATIVE_BASE_URL = OLLAMA_DEFAULT_BASE_URL;
+export const OLLAMA_GTRCHAT_URL_PATH = "/api/gtrchat";
 
 export function resolveOllamaBaseUrlForRun(params: {
   modelBaseUrl?: string;

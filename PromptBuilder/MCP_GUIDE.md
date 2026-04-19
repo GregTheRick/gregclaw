@@ -1,46 +1,43 @@
 # MCP Setup Guide - Gemma 4 Prompt Builder
 
-This guide explains how to connect the Gemma 4 Prompt Builder CLI to various MCP (Model Context Protocol) clients. This allows LLMs (like Claude, GPT-4, or Copilot) to generate perfectly formatted Gemma 4 prompts automatically.
+This guide explains how to connect the Gemma 4 Prompt Builder to various MCP (Model Context Protocol) clients. By using the native **MCP Server Mode**, LLMs can automatically discover the prompter and generate correctly formatted Gemma 4 turn structures.
 
 ## 🚀 Pre-requisites
 
 1. **Build the binary**:
    ```bash
-   # Filter PATH to avoid WSL/Windows permission issues if applicable
-   PATH=$(echo $PATH | tr ':' '\n' | grep -v "/mnt/c/" | tr '\n' ':' | sed 's/:$//') cargo tauri build --release
+   # Build the binary
+   PATH=$(echo $PATH | tr ':' '\n' | grep -v "/mnt/c/" | tr '\n' ':' | sed 's/:$//') cargo tauri build
    ```
 2. **Find your binary**:
-   The binary is located at: `PromptBuilder/target/release/tauri-app`
+   The binary is located at: `PromptBuilder/target/release/gemma4-prompt-builder-app`
 
 ---
 
-## 🛠️ 1. Integration with OpenClaw (This Project)
+## 🛠️ 1. Native MCP Server Mode (Recommended)
 
-To add the prompter to OpenClaw's internal MCP registry, add the following to your `openclaw.json`:
+The Prompt Builder includes a native MCP stdio server. This is the **most robust** method as it allows the agent to see the exact structure required for Gemma 4 prompts.
+
+### 🌌 Antigravity Agents
+
+To make the prompter available to any **Antigravity agent**, add it to your configuration:
 
 ```json
 {
   "mcp": {
     "servers": {
       "gemma4-prompter": {
-        "command": "/absolute/path/to/PromptBuilder/target/release/tauri-app",
-        "args": ["--json"]
+        "command": "/absolute/path/to/PromptBuilder/target/release/gemma4-prompt-builder-app",
+        "args": ["mcp"]
       }
     }
   }
 }
 ```
 
-> [!NOTE]
-> OpenClaw's MCP client will automatically pass the required JSON structure to the `--json` flag when the model requests a prompt generation.
+### 🤖 VSCode: Roo Code / Claude Dev
 
----
-
-## 🤖 2. VSCode: Roo Code / Claude Dev
-
-Roo Code (formerly Claude Dev) supports local MCP servers. To add it:
-
-1. Open **Roo Code Settings** in VSCode.
+1. Open **Roo Code Settings**.
 2. Click **Configure MCP Servers**.
 3. Add this entry to your `mcp_config.json`:
 
@@ -48,8 +45,8 @@ Roo Code (formerly Claude Dev) supports local MCP servers. To add it:
 {
   "mcpServers": {
     "gemma4-prompter": {
-      "command": "/absolute/path/to/PromptBuilder/target/release/tauri-app",
-      "args": []
+      "command": "/absolute/path/to/PromptBuilder/target/release/gemma4-prompt-builder-app",
+      "args": ["mcp"]
     }
   }
 }
@@ -57,39 +54,50 @@ Roo Code (formerly Claude Dev) supports local MCP servers. To add it:
 
 ---
 
-## 🐙 3. GitHub Copilot (VSCode)
+## 🛠️ 2. Legacy One-Shot CLI Mode
 
-GitHub Copilot does not have native "local MCP" support yet, but you can bridge it using a small wrapper or by using an extension like **"MCP Client"**.
+If you prefer to call the prompter as a simple shell command without using the MCP protocol:
 
-### Using a Bridge:
+### OpenClaw Integration
 
-The easiest way is to use the **"MCP Bridge"** extension which exposes local MCP tools to the global VSCode command palette, making them accessible to Copilot Custom Instructions.
+```json
+{
+  "mcp": {
+    "servers": {
+      "gemma4-prompter": {
+        "command": "/absolute/path/to/PromptBuilder/target/release/gemma4-prompt-builder-app",
+        "args": ["--json"]
+      }
+    }
+  }
+}
+```
 
 ---
 
-## 📋 JSON Input Format (Minimal)
+## 📋 How Agents See the Tool
 
-The prompter now supports minimal JSON without manual IDs. The LLM can simply output:
+When running in `mcp` mode, the prompter exposes the following tool to the agent:
 
-```json
-[
-  {
-    "role": "system",
-    "components": [{ "ctype": "SystemText", "data": { "Text": "You are a helpful assistant." } }]
-  },
-  {
-    "role": "user",
-    "components": [{ "ctype": "Answer", "data": { "Text": "How do I use tool_call?" } }]
-  }
-]
-```
+- **Name**: `format_gemma4_prompt`
+- **Description**: Converts a structured JSON list of turns into a Gemma 4 raw prompt.
+- **Schema**: The agent automatically receives the JSON Schema, ensuring it always generates valid `role`, `ctype`, and `data` fields.
 
-## 🧪 Testing the CLI
+---
 
-You can test if it works directly from your terminal:
+## 🧪 Manual Verification
+
+### Test the MCP handshake:
 
 ```bash
-./target/release/tauri-app --json '[{"role": "user", "components": [{"ctype": "Answer", "data": {"Text": "Hello"}}]}]'
+# Start the server and paste this line into STDIN:
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+```
+
+### Test the One-Shot CLI:
+
+```bash
+./target/release/gemma4-prompt-builder-app --json '[{"role": "user", "components": [{"ctype": "answer", "data": {"text": "Hello"}}]}]'
 ```
 
 **Expected Output:**

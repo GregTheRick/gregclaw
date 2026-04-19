@@ -1,17 +1,26 @@
+import { randomUUID } from "node:crypto";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, type AssistantMessage } from "@mariozechner/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  type AssistantMessage,
+  type TextContent,
+  type ThinkingContent,
+  type ToolCall,
+} from "@mariozechner/pi-ai";
 import { isNonSecretApiKeyMarker } from "openclaw/plugin-sdk/provider-auth";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { convertToGemma4Format } from "./gemma4-formatter.js";
-import { Gemma4Parser } from "./gemma4-parser.js";
+import { convertToGTRFormat } from "./gemma4-gtr-formatter.js";
+import type { GTRChatRequest, GTRChatResponseEvent } from "./gemma4-gtr-types.js";
 import { parseJsonPreservingUnsafeIntegers } from "./ollama-json.js";
-import { OLLAMA_NATIVE_BASE_URL } from "./stream.js";
+import { OLLAMA_GTRCHAT_URL_PATH, OLLAMA_NATIVE_BASE_URL } from "./stream.js";
 
 const log = createSubsystemLogger("ollama-gemma4-stream");
 
 export async function* decodeGenerateNdjsonStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): AsyncGenerator<Record<string, unknown>> {
+): AsyncGenerator<
+  GTRChatResponseEvent & { prompt_eval_count?: number; eval_count?: number; error?: string }
+> {
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -29,7 +38,11 @@ export async function* decodeGenerateNdjsonStream(
         continue;
       }
       try {
-        yield parseJsonPreservingUnsafeIntegers(line) as Record<string, unknown>;
+        yield parseJsonPreservingUnsafeIntegers(line) as GTRChatResponseEvent & {
+          prompt_eval_count?: number;
+          eval_count?: number;
+          error?: string;
+        };
       } catch {
         log.warn(`Skipping malformed NDJSON line: ${line.slice(0, 120)}`);
       }
@@ -38,7 +51,11 @@ export async function* decodeGenerateNdjsonStream(
 
   if (buffer) {
     try {
-      yield parseJsonPreservingUnsafeIntegers(buffer) as Record<string, unknown>;
+      yield parseJsonPreservingUnsafeIntegers(buffer) as GTRChatResponseEvent & {
+        prompt_eval_count?: number;
+        eval_count?: number;
+        error?: string;
+      };
     } catch {}
   }
 }
@@ -48,7 +65,7 @@ export function createGemma4StreamFn(
   defaultHeaders?: Record<string, string>,
 ): StreamFn {
   const normalizedBase = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
-  const generateUrl = `${normalizedBase || OLLAMA_NATIVE_BASE_URL}/api/generate`;
+  const generateUrl = `${normalizedBase || OLLAMA_NATIVE_BASE_URL}${OLLAMA_GTRCHAT_URL_PATH}`;
 
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -57,37 +74,29 @@ export function createGemma4StreamFn(
       try {
         const messages = context.messages ? [...context.messages] : [];
 
-        // Pi-Agent natively handles the loop and will send us the `toolResult`
-        // messages on subsequent invocations.
-        // Formatter logic preserves thoughts across ongoing sessions inherently.
-        const { prompt: rawPrompt, images } = convertToGemma4Format(messages, {
+        // Convert context to GTR structured turns instead of raw prompt
+        const turns = convertToGTRFormat(messages, {
           system: context.systemPrompt,
           tools: context.tools,
-          thinkActive:
+          thinkEnabled:
             (model as unknown as { extraParams?: { thinking?: boolean } }).extraParams?.thinking ??
             true,
-          preserveAllThoughts: false, // handled intrinsically by isLastMessage checks
         });
 
         const ollamaOptions: Record<string, unknown> = {
           num_ctx: model.contextWindow ?? 8192,
-          stop: ["<|tool_response>", "<turn|>", "<|turn>"],
         };
         if (typeof options?.temperature === "number") {
           ollamaOptions.temperature = options.temperature;
         }
 
-        const body: Record<string, unknown> = {
+        const body: GTRChatRequest = {
           model: model.id,
-          prompt: rawPrompt,
-          raw_render: true,
-          raw: true,
+          turns,
           stream: true,
+          stream_mode: "structured",
           options: ollamaOptions,
         };
-        if (images.length > 0) {
-          body.images = images;
-        }
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -117,17 +126,9 @@ export function createGemma4StreamFn(
         }
 
         const reader = response.body.getReader();
-        const parser = new Gemma4Parser();
 
-        let loopRequiresToolExec = false;
-        let executedToolCalls: Array<{
-          id?: string;
-          name: string;
-          arguments: Record<string, unknown>;
-        }> = [];
-        let assistantContentStr = "";
-        let assistantThinkingStr = "";
-        let rawResponseBuffer = "";
+        let haltEncountered = false;
+        let assistantContent: (TextContent | ThinkingContent | ToolCall)[] = [];
 
         const modelInfo = { api: model.api, provider: "ollama", id: model.id };
 
@@ -156,71 +157,93 @@ export function createGemma4StreamFn(
           if (typeof chunk.eval_count === "number") {
             evalCount = chunk.eval_count;
           }
-          if (typeof chunk.response === "string") {
-            rawResponseBuffer += chunk.response;
-            const events = parser.push(chunk.response);
 
-            for (const ev of events) {
-              if (ev.type === "text" && ev.content) {
-                assistantContentStr += ev.content;
-                stream.push({
-                  type: "text_delta",
-                  contentIndex: 0,
-                  delta: ev.content,
-                  partial: {
-                    role: "assistant",
-                    content: [{ type: "text", text: assistantContentStr }],
-                    stopReason: "stop",
-                  } as unknown as AssistantMessage,
-                });
-              } else if (ev.type === "thinking" && ev.content) {
-                assistantThinkingStr += ev.content;
-                stream.push({
-                  type: "thinking_delta",
-                  contentIndex: 0,
-                  delta: ev.content,
-                  partial: {
-                    role: "assistant",
-                    content: [{ type: "thinking", thinking: assistantThinkingStr }],
-                    stopReason: "stop",
-                  } as unknown as AssistantMessage,
-                });
-              } else if (ev.type === "tool_call" && ev.toolCall) {
-                loopRequiresToolExec = true;
-                executedToolCalls.push(ev.toolCall);
-              }
+          if (chunk.error) {
+            throw new Error(chunk.error);
+          }
+
+          if (chunk.type === "text" && chunk.content) {
+            let lastPart = assistantContent[assistantContent.length - 1];
+            if (lastPart?.type === "text") {
+              lastPart.text += chunk.content;
+            } else {
+              assistantContent.push({ type: "text", text: chunk.content });
+              lastPart = assistantContent[assistantContent.length - 1];
+            }
+
+            stream.push({
+              type: "text_delta",
+              contentIndex: assistantContent.length - 1,
+              delta: chunk.content,
+              partial: {
+                role: "assistant",
+                content: [...assistantContent],
+                stopReason: "stop",
+              } as unknown as AssistantMessage,
+            });
+          } else if (chunk.type === "thinking" && chunk.content) {
+            let lastPart = assistantContent[assistantContent.length - 1];
+            if (lastPart?.type === "thinking") {
+              lastPart.thinking += chunk.content;
+            } else {
+              assistantContent.push({ type: "thinking", thinking: chunk.content });
+              lastPart = assistantContent[assistantContent.length - 1];
+            }
+
+            stream.push({
+              type: "thinking_delta",
+              contentIndex: assistantContent.length - 1,
+              delta: chunk.content,
+              partial: {
+                role: "assistant",
+                content: [...assistantContent],
+                stopReason: "stop",
+              } as unknown as AssistantMessage,
+            });
+          } else if (chunk.type === "tool_call" && chunk.tool_call) {
+            const parsedArgs = (chunk.tool_call.args || []).reduce(
+              (acc: Record<string, unknown>, pair) => {
+                try {
+                  acc[pair.key] = JSON.parse(pair.val);
+                } catch {
+                  acc[pair.key] = pair.val;
+                }
+                return acc;
+              },
+              {},
+            );
+
+            assistantContent.push({
+              type: "toolCall",
+              id: `ollama_call_${randomUUID()}`,
+              name: chunk.tool_call.name,
+              arguments: parsedArgs,
+            });
+            stream.push({
+              type: "toolcall_start",
+              contentIndex: assistantContent.length - 1,
+              partial: {
+                role: "assistant",
+                content: [...assistantContent],
+                stopReason: "toolUse",
+              } as unknown as AssistantMessage,
+            });
+          } else if (chunk.type === "done") {
+            if (chunk.status === "call_wait") {
+              haltEncountered = true;
             }
           }
         }
 
-        const buildContentObj = () => {
-          let arr: unknown[] = [];
-          if (assistantThinkingStr) {
-            arr.push({ type: "thinking", thinking: assistantThinkingStr });
-          }
-          if (assistantContentStr) {
-            arr.push({ type: "text", text: assistantContentStr });
-          }
-          if (loopRequiresToolExec && executedToolCalls.length > 0) {
-            for (const call of executedToolCalls) {
-              arr.push({
-                type: "toolCall",
-                id: call.id || `ollama_call_${Math.random().toString(36).substring(7)}`,
-                name: call.name,
-                arguments: call.arguments,
-              });
-            }
-          }
-          return arr;
-        };
+        const stopReason = haltEncountered ? "toolUse" : "stop";
 
         const partialResp = {
           role: "assistant",
           api: modelInfo.api,
           provider: modelInfo.provider,
           model: modelInfo.id,
-          content: buildContentObj(),
-          stopReason: loopRequiresToolExec ? "toolUse" : "stop",
+          content: assistantContent,
+          stopReason,
           usage: {
             input: promptEvalCount,
             output: evalCount,
@@ -231,26 +254,10 @@ export function createGemma4StreamFn(
 
         stream.push({
           type: "done",
-          reason: loopRequiresToolExec ? "toolUse" : "stop",
+          reason: stopReason,
           message: partialResp,
         });
         stream.end();
-
-        try {
-          const logPath =
-            process.env.OPENCLAW_GEMMA4_LOG_FILE ||
-            require("node:path").join(require("node:os").tmpdir(), "openclaw-gemma4.log");
-          let logContent =
-            `\n========== TURN at ${new Date().toISOString()} ==========\n` +
-            `>>> RAW PROMPT >>>\n${rawPrompt}\n`;
-          if (images.length > 0) {
-            logContent += `>>> IMAGES (base64) >>>\n${images.join("\n")}\n`;
-          }
-          logContent += `<<< RAW RESPONSE <<<\n${rawResponseBuffer}\n`;
-          require("node:fs").appendFileSync(logPath, logContent);
-        } catch (e) {
-          log.warn(`Failed to write Gemma 4 raw log: ${String(e)}`);
-        }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         stream.push({

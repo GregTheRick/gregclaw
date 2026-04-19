@@ -32,10 +32,4 @@ export {
   shouldInjectOllamaCompatNumCtx,
   wrapOllamaCompatNumCtx,
 } from "./src/stream.js";
-export {
-  convertToGemma4Format,
-  formatGemmaToolDeclarations,
-  stringifyGemma,
-} from "./src/gemma4-formatter.js";
-export { Gemma4Parser, type Gemma4StreamEvent } from "./src/gemma4-parser.js";
 export { createGemma4StreamFn, decodeGenerateNdjsonStream } from "./src/gemma4-stream.js";
