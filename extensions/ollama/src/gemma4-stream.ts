@@ -129,6 +129,7 @@ export function createGemma4StreamFn(
 
       let hasSeenDoneStatus = false;
       let hasSeenContent = false;
+      let assistantContent: (TextContent | ThinkingContent | ToolCall)[] = [];
 
       try {
         const messages = context.messages ? [...context.messages] : [];
@@ -200,7 +201,6 @@ export function createGemma4StreamFn(
         reader = response.body.getReader();
 
         let haltEncountered = false;
-        let assistantContent: (TextContent | ThinkingContent | ToolCall)[] = [];
 
         const modelInfo = { api: model.api, provider: "ollama", id: model.id };
 
