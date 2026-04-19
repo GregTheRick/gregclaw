@@ -1,12 +1,12 @@
 export type GTRRole = "system" | "user" | "model";
 
 export type GTRComponentType =
-  | "systemtext"
+  | "system_text"
   | "answer"
   | "thinking"
-  | "toolschema"
-  | "toolcall"
-  | "toolresponse"
+  | "tool_schema"
+  | "tool_call"
+  | "tool_response"
   | "image"
   | "audio";
 

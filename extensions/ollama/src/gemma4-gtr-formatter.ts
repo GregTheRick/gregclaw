@@ -22,7 +22,7 @@ export function convertToGTRFormat(
   const systemComponents: GTRChatComponent[] = [];
   if (options.system) {
     systemComponents.push({
-      ctype: "systemtext",
+      ctype: "system_text",
       data: { text: options.system },
     });
   }
@@ -40,14 +40,14 @@ export function convertToGTRFormat(
         const p = prop as Record<string, unknown>;
         return {
           name,
-          arg_type: (p.type as string)?.toUpperCase() || "STRING",
+          arg_type: (p.type as string)?.toLowerCase() || "string",
           description: (p.description as string) || "",
         };
       }),
     }));
 
     systemComponents.push({
-      ctype: "toolschema",
+      ctype: "tool_schema",
       data: { tools },
     });
   }
@@ -104,7 +104,7 @@ function extractGTRComponents(msg: Message): GTRChatComponent[] {
       const args = parseJsonObjectPreservingUnsafeIntegers(p.arguments || p.input) ?? {};
       const name = typeof p.name === "string" ? p.name : "";
       result.push({
-        ctype: "toolcall",
+        ctype: "tool_call",
         data: {
           name,
           args: Object.entries(args).map(([key, val]) => ({ key, val: String(val) })),
@@ -119,7 +119,7 @@ function extractGTRComponents(msg: Message): GTRChatComponent[] {
           : (rawResult as Record<string, unknown> | undefined);
       const name = typeof p.name === "string" ? p.name : "";
       result.push({
-        ctype: "toolresponse",
+        ctype: "tool_response",
         data: {
           name,
           args: Object.entries(resultObj || {}).map(([key, val]) => ({ key, val: String(val) })),

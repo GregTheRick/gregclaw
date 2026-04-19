@@ -49,9 +49,9 @@ The client sends the system instructions, tool schema, and the user's initial qu
       "role": "system",
       "thinking_enabled": true,
       "components": [
-        { "ctype": "systemtext", "data": { "text": "You are a travel agent." } },
+        { "ctype": "system_text", "data": { "text": "You are a travel agent." } },
         {
-          "ctype": "toolschema",
+          "ctype": "tool_schema",
           "data": {
             "tools": [
               { "name": "get_weather", "args": [{ "name": "location", "arg_type": "string" }] }
@@ -98,8 +98,8 @@ _Crucial Implementation Rule_: The historical tool call request (`toolcall`) and
     {
       "role": "model",
       "components": [
-        { "ctype": "toolcall", "data": {"name": "get_weather", "args": [{"key": "location", "val": "Tokyo"}]} },
-        { "ctype": "toolresponse", "data": {"name": "get_weather", "args": [{"key": "temp", "val": "15"}]} }
+        { "ctype": "tool_call", "data": {"name": "get_weather", "args": [{"key": "location", "val": "Tokyo"}]} },
+        { "ctype": "tool_response", "data": {"name": "get_weather", "args": [{"key": "temp", "val": "15"}]} }
       ]
     }
   ]
@@ -144,16 +144,16 @@ The client sees `status: "complete"`, renders the text to the user, and waits fo
 
 Each component has a `ctype` (Component Type) which determines the structure of its `data` field.
 
-| `ctype`        | Data Structure      | Description                                         |
-| :------------- | :------------------ | :-------------------------------------------------- |
-| `systemtext`   | `GTRTextData`       | Core system instructions.                           |
-| `answer`       | `GTRTextData`       | Standard user queries or model text responses.      |
-| `thinking`     | `GTRTextData`       | Historical reasoning blocks for context retention.  |
-| `toolschema`   | `GTRToolSchemaData` | Definitions of functions available to the model.    |
-| `toolcall`     | `GTRToolCallData`   | A record of a function call performed by the model. |
-| `toolresponse` | `GTRToolCallData`   | The result of a function execution.                 |
-| `image`        | `GTRMultimodalData` | Base64-encoded image data.                          |
-| `audio`        | `GTRMultimodalData` | Base64-encoded audio data.                          |
+| `ctype`         | Data Structure      | Description                                         |
+| :-------------- | :------------------ | :-------------------------------------------------- |
+| `system_text`   | `GTRTextData`       | Core system instructions.                           |
+| `answer`        | `GTRTextData`       | Standard user queries or model text responses.      |
+| `thinking`      | `GTRTextData`       | Historical reasoning blocks for context retention.  |
+| `tool_schema`   | `GTRToolSchemaData` | Definitions of functions available to the model.    |
+| `tool_call`     | `GTRToolCallData`   | A record of a function call performed by the model. |
+| `tool_response` | `GTRToolCallData`   | The result of a function execution.                 |
+| `image`         | `GTRMultimodalData` | Base64-encoded image data.                          |
+| `audio`         | `GTRMultimodalData` | Base64-encoded audio data.                          |
 
 ---
 
