@@ -21,8 +21,11 @@ import {
 
 const log = createSubsystemLogger("ollama-gemma4-stream");
 
+const GTR_INACTIVITY_TIMEOUT_MS = 30000;
+
 export async function* decodeGenerateNdjsonStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal?: AbortSignal,
 ): AsyncGenerator<
   GTRChatResponseEvent & { prompt_eval_count?: number; eval_count?: number; error?: string }
 > {
@@ -30,7 +33,28 @@ export async function* decodeGenerateNdjsonStream(
   let buffer = "";
 
   while (true) {
-    const { done, value } = await reader.read();
+    // Implement inactivity timeout for each read operation
+    const readPromise = reader.read();
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("GTR_STREAM_STALL: No data received for 30s"));
+      }, GTR_INACTIVITY_TIMEOUT_MS);
+
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(new Error("AbortError"));
+        },
+        { once: true },
+      );
+
+      // We need to clear the timer if the read resolves
+      void readPromise.finally(() => clearTimeout(timer));
+    });
+
+    const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+
     if (done) {
       break;
     }
@@ -82,6 +106,9 @@ export function createGemma4StreamFn(
           reader.cancel().catch(() => {});
         }
       };
+
+      let hasSeenDoneStatus = false;
+      let hasSeenContent = false;
 
       try {
         const messages = context.messages ? [...context.messages] : [];
@@ -181,7 +208,7 @@ export function createGemma4StreamFn(
         let promptEvalCount = 0;
         let evalCount = 0;
 
-        for await (const chunk of decodeGenerateNdjsonStream(reader)) {
+        for await (const chunk of decodeGenerateNdjsonStream(reader, options?.signal)) {
           if (typeof chunk.prompt_eval_count === "number") {
             promptEvalCount = chunk.prompt_eval_count;
           }
@@ -194,6 +221,7 @@ export function createGemma4StreamFn(
           }
 
           if (chunk.type === "text" && chunk.content) {
+            hasSeenContent = true;
             let lastPart = assistantContent[assistantContent.length - 1];
             if (lastPart?.type === "text") {
               lastPart.text += chunk.content;
@@ -213,6 +241,7 @@ export function createGemma4StreamFn(
               } as unknown as AssistantMessage,
             });
           } else if (chunk.type === "thinking" && chunk.content) {
+            hasSeenContent = true;
             let lastPart = assistantContent[assistantContent.length - 1];
             if (lastPart?.type === "thinking") {
               lastPart.thinking += chunk.content;
@@ -232,6 +261,7 @@ export function createGemma4StreamFn(
               } as unknown as AssistantMessage,
             });
           } else if (chunk.type === "tool_call" && chunk.tool_call) {
+            hasSeenContent = true;
             const parsedArgs = (chunk.tool_call.args || []).reduce(
               (acc: Record<string, unknown>, pair) => {
                 try {
@@ -260,6 +290,7 @@ export function createGemma4StreamFn(
               } as unknown as AssistantMessage,
             });
           } else if (chunk.type === "done") {
+            hasSeenDoneStatus = true;
             if (chunk.status === "call_wait") {
               haltEncountered = true;
             }
@@ -267,6 +298,12 @@ export function createGemma4StreamFn(
         }
 
         const stopReason = haltEncountered ? "toolUse" : "stop";
+
+        // If the stream finished without a terminal 'done' status AND we haven't seen enough content,
+        // treat it as an interruption rather than success.
+        if (!hasSeenDoneStatus && !hasSeenContent) {
+          throw new Error("GTR_STREAM_INTERRUPTED: Connection closed before generation finished.");
+        }
 
         const partialResp = {
           role: "assistant",
@@ -304,7 +341,8 @@ export function createGemma4StreamFn(
           }
         }
       } catch (err: unknown) {
-        const isAbort = err instanceof Error && err.name === "AbortError";
+        const isAbort =
+          err instanceof Error && (err.name === "AbortError" || err.message === "AbortError");
         const errorMessage = formatErrorMessage(err);
         if (!isAbort) {
           log.error(`Gemma 4 stream error: ${errorMessage}`);

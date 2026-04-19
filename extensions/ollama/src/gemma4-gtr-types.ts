@@ -28,7 +28,6 @@ export interface GTRToolSchemaData {
 }
 
 export interface GTRToolCallData {
-  pid?: string;
   name: string;
   args: Array<{ key: string; val: string }>;
 }

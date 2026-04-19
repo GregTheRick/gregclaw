@@ -3,6 +3,7 @@ import type {
   GTRChatComponent,
   GTRChatTurn,
   GTRRole,
+  GTRTextData,
   GTRTool,
   GTRToolCallData,
 } from "./gemma4-gtr-types.js";
@@ -64,32 +65,62 @@ export function convertToGTRFormat(
 
   // 2. Conversation Turns with PID tracking and grouping
   const callIdToPid = new Map<string, string>();
+  const callIdToName = new Map<string, string>();
   let nextPid = 1;
 
   for (const msg of messages) {
-    const role: GTRRole = msg.role === "assistant" ? "model" : (msg.role as GTRRole);
-    const components = extractGTRComponents(msg);
+    const isToolResult = msg.role === "toolResult";
+    const role: GTRRole =
+      msg.role === "assistant" ? "model" : isToolResult ? "model" : (msg.role as GTRRole);
+    let components = extractGTRComponents(msg);
 
     if (components.length === 0) {
       continue;
     }
 
-    // Assign PIDs to tool calls and responses
+    // Special Case: if it's a tool result message but extracted as an 'answer' (string content),
+    // force it into a 'tool_response' component.
+    if (isToolResult) {
+      components = components.map((comp) => {
+        if (comp.ctype === "answer") {
+          const msgRecord = msg as unknown as Record<string, unknown>;
+          const toolCallId =
+            (typeof msgRecord.toolCallId === "string" ? msgRecord.toolCallId : undefined) ||
+            (typeof msgRecord.id === "string" ? msgRecord.id : undefined);
+          const name =
+            (typeof msgRecord.name === "string" ? msgRecord.name : undefined) ||
+            (toolCallId ? callIdToName.get(toolCallId) : undefined) ||
+            "unknown";
+          return {
+            ctype: "tool_response",
+            toolCallId,
+            data: {
+              name,
+              args: [{ key: "result", val: (comp.data as GTRTextData).text }],
+            },
+          } as ExtractedComponent;
+        }
+        return comp;
+      });
+    }
+
+    // Assign PIDs to tool calls and responses (INJECTED INTO ARGS)
     for (const comp of components) {
       if (comp.ctype === "tool_call" && comp.toolCallId) {
         const pid = String(nextPid++);
         callIdToPid.set(comp.toolCallId, pid);
-        (comp.data as GTRToolCallData).pid = pid;
+        callIdToName.set(comp.toolCallId, (comp.data as GTRToolCallData).name);
+        (comp.data as GTRToolCallData).args.push({ key: "pid", val: pid });
       } else if (comp.ctype === "tool_response" && comp.toolCallId) {
         const pid = callIdToPid.get(comp.toolCallId);
         if (pid) {
-          (comp.data as GTRToolCallData).pid = pid;
+          (comp.data as GTRToolCallData).args.push({ key: "pid", val: pid });
         }
       }
     }
 
     // Merge tool_response into the preceding model turn if possible
-    if (msg.role === "toolResult") {
+    if (isToolResult) {
       const lastTurn = turns[turns.length - 1];
       if (lastTurn && lastTurn.role === "model") {
         lastTurn.components.push(...components.map((c) => ({ ctype: c.ctype, data: c.data })));
