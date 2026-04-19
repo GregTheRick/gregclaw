@@ -110,11 +110,23 @@ export function convertToGTRFormat(
         const pid = String(nextPid++);
         callIdToPid.set(comp.toolCallId, pid);
         callIdToName.set(comp.toolCallId, (comp.data as GTRToolCallData).name);
-        (comp.data as GTRToolCallData).args.push({ key: "pid", val: pid });
+        const toolData = comp.data as GTRToolCallData;
+        const existingPid = toolData.args.find((a) => a.key === "pid");
+        if (existingPid) {
+          existingPid.val = pid;
+        } else {
+          toolData.args.push({ key: "pid", val: pid });
+        }
       } else if (comp.ctype === "tool_response" && comp.toolCallId) {
         const pid = callIdToPid.get(comp.toolCallId);
         if (pid) {
-          (comp.data as GTRToolCallData).args.push({ key: "pid", val: pid });
+          const toolData = comp.data as GTRToolCallData;
+          const existingPid = toolData.args.find((a) => a.key === "pid");
+          if (existingPid) {
+            existingPid.val = pid;
+          } else {
+            toolData.args.push({ key: "pid", val: pid });
+          }
         }
       }
     }
