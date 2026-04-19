@@ -32,7 +32,7 @@ async function logGemma4ToFile(logContent: string) {
   }
 }
 
-const GTR_INACTIVITY_TIMEOUT_MS = 60000;
+const GTR_INACTIVITY_TIMEOUT_MS = 120000;
 
 export async function* decodeGenerateNdjsonStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
