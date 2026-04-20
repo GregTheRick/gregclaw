@@ -184,14 +184,18 @@ function extractGTRComponents(msg: Message): ExtractedComponent[] {
       const args = parseJsonObjectPreservingUnsafeIntegers(p.arguments || p.input) ?? {};
       const name = typeof p.name === "string" ? p.name : "";
       const id = typeof p.id === "string" ? p.id : undefined;
+
+      const rawArgs = (args.__raw_args_gtr as Record<string, string>) || {};
+      const filteredArgs = Object.entries(args).filter(([k]) => k !== "__raw_args_gtr");
+
       result.push({
         ctype: "tool_call",
         toolCallId: id,
         data: {
           name,
-          args: Object.entries(args).map(([key, val]) => ({
+          args: filteredArgs.map(([key, val]) => ({
             key,
-            val: typeof val === "string" ? val : JSON.stringify(val),
+            val: rawArgs[key] ?? (typeof val === "string" ? val : JSON.stringify(val)),
           })),
         },
       });

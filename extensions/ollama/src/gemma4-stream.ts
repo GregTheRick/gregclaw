@@ -278,11 +278,13 @@ export function createGemma4StreamFn(
             });
           } else if (chunk.type === "tool_call" && chunk.tool_call) {
             hasSeenContent = true;
+            const rawArgs: Record<string, string> = {};
             const parsedArgs = (chunk.tool_call.args || []).reduce(
               (acc: Record<string, unknown>, pair) => {
                 if (pair.key === "__pid") {
                   return acc;
                 }
+                rawArgs[pair.key] = pair.val;
                 try {
                   acc[pair.key] = JSON.parse(pair.val);
                 } catch {
@@ -297,7 +299,7 @@ export function createGemma4StreamFn(
               type: "toolCall",
               id: `ollama_call_${randomUUID()}`,
               name: chunk.tool_call.name,
-              arguments: parsedArgs,
+              arguments: { ...parsedArgs, __raw_args_gtr: rawArgs },
             });
             stream.push({
               type: "toolcall_start",

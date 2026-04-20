@@ -171,4 +171,39 @@ describe("convertToGTRFormat - Tool PID Correlation", () => {
     expect(pathArg).toBeDefined();
     expect(pathArg?.val).toBe("test.txt"); // Raw string preserved
   });
+
+  it("should preserve exact raw strings from __raw_args_gtr if present", () => {
+    const rawVal = '[  { "oldText": "A", "newText": "B" }  ]'; // Custom whitespace preserved
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "edit",
+            arguments: {
+              path: "test.txt",
+              edits: [{ oldText: "A", newText: "B" }],
+              __raw_args_gtr: {
+                path: "test.txt",
+                edits: rawVal,
+              },
+            },
+          },
+        ],
+      },
+    ];
+
+    const turns = convertToGTRFormat(messages);
+    const toolCall = turns[0].components.find((c) => c.ctype === "tool_call");
+    const args = (toolCall?.data as any).args as { key: string; val: string }[];
+
+    const editsArg = args.find((a) => a.key === "edits");
+    expect(editsArg?.val).toBe(rawVal); // Should be the EXACT raw string, not JSON.stringify output
+
+    // Ensure __raw_args_gtr itself is not emitted as a key
+    const rawKey = args.find((a) => a.key === "__raw_args_gtr");
+    expect(rawKey).toBeUndefined();
+  });
 });

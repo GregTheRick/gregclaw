@@ -203,6 +203,27 @@ Used for both `tool_call` (requests) and `tool_call` (events).
 
 ---
 
+### 4. Nested Schema Support
+
+The GTR API provides first-class support for complex JSON-like argument structures. This allows the model to utilize tools with nested arrays or objects (such as a multi-file `edit` function).
+
+**Example: Complex Tool Call with Nested Array**
+
+```json
+{
+  "type": "tool_call",
+  "tool_call": {
+    "name": "edit",
+    "args": [
+      { "key": "path", "val": "PLAN.md" },
+      { "key": "edits", "val": "[{\"oldText\": \"...\", \"newText\": \"...\"}]" }
+    ]
+  }
+}
+```
+
+---
+
 ## Technical Implementation & Hardening Details
 
 The GTR API is built on several key architectural principles to ensure security and robustness.
@@ -216,6 +237,13 @@ Instead of parsing raw text, the server monitors the **Token ID stream** from th
 - **Tool Call Start**: `[48]` (`<|tool_call>`)
 - **Tool Call End**: `[49]` (`<tool_call|>`)
 - **String Delimiter**: `[52]` (`<|"|>`)
+
+### 2. Nesting-Aware Tool Parser
+
+To support complex schemas without "shattering" arguments, the tool call parser implements recursive depth tracking for `{}` (curly braces) and `[]` (square brackets).
+
+- Delimiters like `:` (key/value separator) and `,` (argument separator) are only triggered at the **root level** (depth 0) of the tool call.
+- This ensures that punctuation inside a nested JSON object is correctly preserved as part of the value, rather than being misidentified as a top-level delimiter.
 
 ### 2. Injection Prevention (Restricted Tokenization)
 

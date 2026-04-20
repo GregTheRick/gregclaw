@@ -147,7 +147,10 @@ describe("createGemma4StreamFn - Tool Call Parsing", () => {
     expect(doneEvent).toBeDefined();
     const toolCall = doneEvent.message.content.find((c: any) => c.type === "toolCall");
     expect(toolCall).toBeDefined();
-    expect(toolCall.arguments).toEqual({ location: "Berlin" });
+    expect(toolCall.arguments.location).toBe("Berlin");
     expect(toolCall.arguments.__pid).toBeUndefined();
+    expect(toolCall.arguments.__raw_args_gtr).toEqual({
+      location: '"Berlin"',
+    });
   });
 });
