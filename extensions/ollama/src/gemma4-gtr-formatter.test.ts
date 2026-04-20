@@ -140,4 +140,35 @@ describe("convertToGTRFormat - Tool PID Correlation", () => {
     expect(respPidArg).toBeDefined();
     expect(respPidArg?.val).toBe("1");
   });
+
+  it("should stringify complex tool arguments using JSON.stringify", () => {
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "edit",
+            arguments: {
+              path: "test.txt",
+              edits: [{ oldText: "A", newText: "B" }],
+            },
+          },
+        ],
+      },
+    ];
+
+    const turns = convertToGTRFormat(messages);
+    const toolCall = turns[0].components.find((c) => c.ctype === "tool_call");
+    const args = (toolCall?.data as any).args as { key: string; val: string }[];
+
+    const editsArg = args.find((a) => a.key === "edits");
+    expect(editsArg).toBeDefined();
+    expect(editsArg?.val).toBe(JSON.stringify([{ oldText: "A", newText: "B" }]));
+
+    const pathArg = args.find((a) => a.key === "path");
+    expect(pathArg).toBeDefined();
+    expect(pathArg?.val).toBe("test.txt"); // Raw string preserved
+  });
 });

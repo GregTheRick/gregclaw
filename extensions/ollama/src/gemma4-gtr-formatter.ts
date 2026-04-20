@@ -189,7 +189,10 @@ function extractGTRComponents(msg: Message): ExtractedComponent[] {
         toolCallId: id,
         data: {
           name,
-          args: Object.entries(args).map(([key, val]) => ({ key, val: String(val) })),
+          args: Object.entries(args).map(([key, val]) => ({
+            key,
+            val: typeof val === "string" ? val : JSON.stringify(val),
+          })),
         },
       });
     } else if (p.type === "tool_result") {
@@ -206,7 +209,10 @@ function extractGTRComponents(msg: Message): ExtractedComponent[] {
         toolCallId,
         data: {
           name,
-          args: Object.entries(resultObj || {}).map(([key, val]) => ({ key, val: String(val) })),
+          args: Object.entries(resultObj || {}).map(([key, val]) => ({
+            key,
+            val: typeof val === "string" ? val : JSON.stringify(val),
+          })),
         },
       });
     } else if (p.type === "image") {
