@@ -51,7 +51,7 @@ export async function* decodeGenerateNdjsonStream(
       const timer = setTimeout(() => {
         reject(
           new Error(
-            `GTR_STREAM_STALL: No data received for 60s. Current buffer: ${buffer.slice(-100)}`,
+            `GTR_STREAM_STALL: No data received for 120s. Current buffer: ${buffer.slice(-100)}`,
           ),
         );
       }, GTR_INACTIVITY_TIMEOUT_MS);
@@ -280,6 +280,9 @@ export function createGemma4StreamFn(
             hasSeenContent = true;
             const parsedArgs = (chunk.tool_call.args || []).reduce(
               (acc: Record<string, unknown>, pair) => {
+                if (pair.key === "__pid") {
+                  return acc;
+                }
                 try {
                   acc[pair.key] = JSON.parse(pair.val);
                 } catch {

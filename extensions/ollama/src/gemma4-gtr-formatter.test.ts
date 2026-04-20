@@ -94,3 +94,50 @@ describe("convertToGTRFormat - Thinking Filter", () => {
     expect(turns[5].components.find((c) => c.ctype === "thinking")).toBeDefined();
   });
 });
+
+describe("convertToGTRFormat - Tool PID Correlation", () => {
+  it("should inject __pid into tool calls and responses", () => {
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "get_weather",
+            arguments: { location: "Berlin" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        name: "get_weather",
+        content: "Sunny, 25°C",
+      },
+    ];
+
+    const turns = convertToGTRFormat(messages);
+
+    // Turn 0: Model (Tool Call)
+    const modelTurn = turns[0];
+    expect(modelTurn.role).toBe("model");
+    const toolCall = modelTurn.components.find((c) => c.ctype === "tool_call");
+    expect(toolCall).toBeDefined();
+    const callArgs = (toolCall?.data as any).args as { key: string; val: string }[];
+    const pidArg = callArgs.find((a) => a.key === "__pid");
+    expect(pidArg).toBeDefined();
+    expect(pidArg?.val).toBe("1");
+
+    // Turn 1: Model (Tool Response - merged or separate depending on implementation, but in this case it merges)
+    // Wait, let's check how it merges.
+    // In convertToGTRFormat, it merges tool_response into preceding model turn if possible.
+    expect(turns.length).toBe(1);
+    const toolResponse = modelTurn.components.find((c) => c.ctype === "tool_response");
+    expect(toolResponse).toBeDefined();
+    const respArgs = (toolResponse?.data as any).args as { key: string; val: string }[];
+    const respPidArg = respArgs.find((a) => a.key === "__pid");
+    expect(respPidArg).toBeDefined();
+    expect(respPidArg?.val).toBe("1");
+  });
+});
